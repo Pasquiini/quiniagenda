@@ -120,7 +120,7 @@ class AgendamentoController extends Controller
         $agendamento->load('cliente', 'user', 'servico');
 
 
-        SendWhatsappMessageJob::dispatch($agendamento);
+        // SendWhatsappMessageJob::dispatch($agendamento);
 
         return response()->json([
             'message' => 'Agendamento criado com sucesso!',
@@ -351,7 +351,7 @@ class AgendamentoController extends Controller
         $agendamento = $user->agendamentos()->create($validated);
 
         // Dispara o Job de WhatsApp para enviar a notificação
-        SendWhatsappMessageJob::dispatch($agendamento);
+        // SendWhatsappMessageJob::dispatch($agendamento);
 
         return response()->json(['message' => 'Agendamento criado com sucesso!', 'agendamento' => $agendamento], 201);
     }
@@ -370,15 +370,15 @@ class AgendamentoController extends Controller
         ]);
 
         // Verifica se o status ou a data_hora foram alterados
-        $shouldSendWhatsapp = $request->input('status') !== $agendamento->status || $request->input('data_hora') !== $agendamento->data_hora;
+        // $shouldSendWhatsapp = $request->input('status') !== $agendamento->status || $request->input('data_hora') !== $agendamento->data_hora;
 
         // Atualiza o agendamento
         $agendamento->update($validated);
 
         // Dispara o Job se houver uma mudança no status ou na data_hora
-        if ($shouldSendWhatsapp) {
-            SendWhatsappMessageJob::dispatch($agendamento);
-        }
+        // if ($shouldSendWhatsapp) {
+        //     SendWhatsappMessageJob::dispatch($agendamento);
+        // }
 
         return response()->json(['message' => 'Agendamento atualizado com sucesso!', 'agendamento' => $agendamento]);
     }
