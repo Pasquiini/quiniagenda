@@ -37,6 +37,7 @@ Route::middleware('auth:api')->group(function () {
     Route::put('/profile', [AuthController::class, 'updateProfile']);
 
     Route::post('/plans/subscribe', [PlanController::class, 'subscribe']);
+    Route::post('/get-subscription-details', [PlanController::class, 'getSubscriptionDetails']);
     Route::post('plans/cancel-plan', [PlanController::class, 'cancelPlan'])->middleware('auth:api');
 
     Route::get('/statistics', [OrcamentoController::class, 'getStatistics']);

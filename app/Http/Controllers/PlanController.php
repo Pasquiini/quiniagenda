@@ -12,6 +12,7 @@ use Stripe\Customer;
 use Stripe\Exception\SignatureVerificationException;
 use Stripe\Invoice;
 use Stripe\Stripe;
+use Stripe\StripeClient;
 use Stripe\Subscription;
 use Stripe\Webhook;
 
@@ -28,7 +29,7 @@ class PlanController extends Controller
 
     // app/Http/Controllers/PlanController.php
 
- public function subscribe(Request $request)
+    public function subscribe(Request $request)
     {
         \Stripe\Stripe::setApiKey(env('STRIPE_SECRET_KEY'));
         $request->validate(['plan_id' => 'required|exists:plans,id']);
@@ -162,7 +163,7 @@ class PlanController extends Controller
         return response()->json(['message' => 'Nenhum plano pago para cancelar.'], 400);
     }
 
-       public function getSubscriptionDetails()
+    public function getSubscriptionDetails()
     {
         $user = Auth::user();
 
@@ -199,7 +200,6 @@ class PlanController extends Controller
                 'current_period_end' => $subscription->current_period_end,
                 'invoices' => $invoices->data,
             ]);
-
         } catch (\Stripe\Exception\ApiErrorException $e) {
             Log::error('Erro ao buscar detalhes da assinatura: ' . $e->getMessage());
             return response()->json(['error' => 'Não foi possível buscar os detalhes da assinatura.'], 500);
