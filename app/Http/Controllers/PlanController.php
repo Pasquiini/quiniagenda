@@ -167,15 +167,19 @@ class PlanController extends Controller
     {
         $user = Auth::user();
 
-        // Garante que o usuário tem um ID de cliente do Stripe
         if (empty($user->stripe_customer_id)) {
-            return response()->json(['error' => 'Nenhum cliente do Stripe associado.'], 404);
+            // Retornar um JSON limpo para o front-end.
+            // Assim, o front-end sabe que não há assinatura para exibir.
+            return response()->json([
+                'current_plan' => null,
+                'current_period_end' => null,
+                'invoices' => []
+            ]);
         }
 
         \Stripe\Stripe::setApiKey(env('STRIPE_SECRET_KEY'));
 
         try {
-            // 1. Busca a assinatura ativa do cliente
             $subscriptions = Subscription::all([
                 'customer' => $user->stripe_customer_id,
                 'status' => 'active',
@@ -184,25 +188,33 @@ class PlanController extends Controller
 
             $subscription = $subscriptions->data[0] ?? null;
 
+            // Se não houver uma assinatura ativa, retornar valores nulos.
             if (!$subscription) {
-                return response()->json(['error' => 'Nenhuma assinatura ativa encontrada.'], 404);
+                return response()->json([
+                    'current_plan' => null,
+                    'current_period_end' => null,
+                    'invoices' => []
+                ]);
             }
 
-            // 2. Busca as últimas faturas do cliente
             $invoices = Invoice::all([
                 'customer' => $user->stripe_customer_id,
                 'limit' => 10
             ]);
 
-            // 3. Retorna os dados para o front-end
             return response()->json([
-                'current_plan' => $subscription->plan->id, // ID do plano no Stripe
+                'current_plan' => $subscription->plan->id,
                 'current_period_end' => $subscription->current_period_end,
                 'invoices' => $invoices->data,
             ]);
         } catch (\Stripe\Exception\ApiErrorException $e) {
+            // Em caso de erro na API do Stripe, também retornar nulo.
             Log::error('Erro ao buscar detalhes da assinatura: ' . $e->getMessage());
-            return response()->json(['error' => 'Não foi possível buscar os detalhes da assinatura.'], 500);
+            return response()->json([
+                'current_plan' => null,
+                'current_period_end' => null,
+                'invoices' => []
+            ]);
         }
     }
 }
