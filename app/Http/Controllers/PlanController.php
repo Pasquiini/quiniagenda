@@ -183,21 +183,26 @@ class PlanController extends Controller
     }
     public function getSubscriptionDetails()
     {
-        $user = Auth::user();
-
-        if (empty($user->stripe_customer_id)) {
-            return response()->json([
-                'subscription' => null,
-                'current_plan' => null,
-                'current_period_end' => null,
-                'invoices' => [],
-            ]);
-        }
-
-        \Stripe\Stripe::setApiKey(env('STRIPE_SECRET_KEY'));
-
         try {
-            // 1) Pega assinaturas sem filtrar por status e escolhe a mais recente "válida"
+            $user = Auth::user();
+            if (!$user) {
+                // sem autenticação => 401 explícito
+                return response()->json(['message' => 'Unauthenticated'], 401);
+            }
+
+            if (empty($user->stripe_customer_id)) {
+                return response()->json([
+                    'subscription' => null,
+                    'current_plan' => null,
+                    'current_period_end' => null,
+                    'invoices' => [],
+                ], 200);
+            }
+
+            // Use config/services.php (evita erro de env/cache)
+            \Stripe\Stripe::setApiKey(config('services.stripe.secret'));
+
+            // Busque assinaturas sem filtrar só por "active"
             $subs = \Stripe\Subscription::all([
                 'customer' => $user->stripe_customer_id,
                 'limit'    => 10,
@@ -205,60 +210,51 @@ class PlanController extends Controller
             ]);
 
             $validStatuses = ['active', 'trialing', 'incomplete', 'past_due', 'unpaid', 'paused'];
-            $subscription = collect($subs->data)
+            $subscription = collect($subs->data ?? [])
                 ->sortByDesc('created')
                 ->first(fn($s) => in_array($s->status, $validStatuses, true));
 
-            // 2) Se não houver assinatura válida, retorna vazio
             if (!$subscription) {
+                // Sem assinatura “utilizável”
                 return response()->json([
-                    'subscription' => null,
-                    'current_plan' => null,
+                    'subscription'       => null,
+                    'current_plan'       => null,
                     'current_period_end' => null,
-                    'invoices' => [],
-                ]);
+                    'invoices'           => [],
+                ], 200);
             }
 
-            // 3) Deriva plano e período
-            $priceId = $subscription->items->data[0]->price->id ?? null;
+            $priceId   = $subscription->items->data[0]->price->id ?? null;
             $periodEnd = $subscription->current_period_end ?? null;
 
-            // 4) Fallback opcional: tenta pegar do upcoming invoice
-            if (!$periodEnd) {
-                try {
-                    $upcoming = \Stripe\Invoice::upcoming([
-                        'customer'     => $user->stripe_customer_id,
-                        'subscription' => $subscription->id,
-                    ]);
-                    // tenta usar a data da linha ou do próprio invoice
-                    $periodEnd = $upcoming->lines->data[0]->period->end
-                        ?? $upcoming->period_end
-                        ?? null;
-                } catch (\Exception $e) {
-                    // se não houver upcoming (p.ex. no fim do ciclo), segue sem fallback
-                }
-            }
-
-            // 5) Faturas (histórico)
+            // Histórico de faturas
             $invoices = \Stripe\Invoice::all([
                 'customer' => $user->stripe_customer_id,
                 'limit'    => 10
             ]);
 
             return response()->json([
-                'subscription'       => $subscription,         // objeto completo (tem current_period_end)
-                'current_plan'       => $priceId,              // ajuda no front
-                'current_period_end' => $periodEnd,            // em segundos
-                'invoices'           => $invoices->data,
-            ]);
+                'subscription'       => $subscription,
+                'current_plan'       => $priceId,
+                'current_period_end' => $periodEnd,
+                'invoices'           => $invoices->data ?? [],
+            ], 200);
         } catch (\Stripe\Exception\ApiErrorException $e) {
-            Log::error('Erro ao buscar detalhes da assinatura: ' . $e->getMessage());
+            Log::error('Stripe API error (getSubscriptionDetails): ' . $e->getMessage(), ['trace' => $e->getTraceAsString()]);
+            // Retorne 200 com payload vazio para não quebrar o front, ou 502 se preferir sinalizar erro
             return response()->json([
                 'subscription' => null,
                 'current_plan' => null,
                 'current_period_end' => null,
                 'invoices' => [],
-            ]);
+                'error' => 'stripe_api_error'
+            ], 200);
+        } catch (\Throwable $e) {
+            Log::error('Unhandled error (getSubscriptionDetails): ' . $e->getMessage(), ['trace' => $e->getTraceAsString()]);
+            // 500 com mensagem amigável
+            return response()->json([
+                'message' => 'Internal error fetching subscription details'
+            ], 500);
         }
     }
 }
