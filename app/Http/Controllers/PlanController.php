@@ -125,6 +125,31 @@ class PlanController extends Controller
                     }
                 }
                 break;
+            case 'customer.subscription.updated':
+                Log::info('Webhook - Evento de atualização de assinatura recebido.');
+
+                $subscription = $event->data->object;
+
+                // Apenas processar se a assinatura estiver ativa
+                if ($subscription->status == 'active') {
+                    // Obtém o novo price_id do item da assinatura
+                    $newPriceId = $subscription->items->data[0]->price->id;
+
+                    // Supondo que você tenha uma forma de mapear o price_id do Stripe para o seu plan_id interno
+                    // Exemplo:
+                    $plan = Plan::where('stripe_price_id', $newPriceId)->first();
+
+                    if ($plan) {
+                        // Encontra o usuário pela assinatura do Stripe
+                        $user = User::where('stripe_subscription_id', $subscription->id)->first();
+                        if ($user) {
+                            $user->plan_id = $plan->id;
+                            $user->save();
+                            Log::info("Webhook - Plano do usuário {$user->id} atualizado para o plano {$plan->id}.");
+                        }
+                    }
+                }
+                break;
             // Este evento é disparado quando a assinatura é cancelada
             case 'customer.subscription.deleted':
                 Log::info('Webhook - Evento de cancelamento de assinatura recebido.');
@@ -182,11 +207,11 @@ class PlanController extends Controller
         try {
             $subscriptions = Subscription::all([
                 'customer' => $user->stripe_customer_id,
-                'status' => 'active',
                 'limit' => 1
             ]);
 
             $subscription = $subscriptions->data[0] ?? null;
+            Log::info('Stripe Subscriptions Response: ' . json_encode($subscriptions));
 
             // Se não houver uma assinatura ativa, retornar valores nulos.
             if (!$subscription) {
@@ -196,6 +221,7 @@ class PlanController extends Controller
                     'invoices' => []
                 ]);
             }
+            Log::info('Subscription current_period_end: ' . $subscription->current_period_end);
 
             $invoices = Invoice::all([
                 'customer' => $user->stripe_customer_id,
