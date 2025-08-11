@@ -108,44 +108,38 @@ class PlanController extends Controller
         switch ($event->type) {
             // Este evento é disparado quando a assinatura é criada com sucesso
             case 'checkout.session.completed':
-                Log::info('Webhook - Evento de checkout.session.completed recebido.');
                 $session = $event->data->object;
+                $userId = (int) ($session->metadata->user_id ?? 0);
 
-                $userId = (int) $session->metadata->user_id;
-                $planId = (int) $session->metadata->plan_id;
-
-                // Salva o ID da assinatura no banco de dados do usuário
-                if ($session->subscription) {
+                if ($session->subscription && $userId) {
                     $user = User::find($userId);
                     if ($user) {
-                        $user->plan_id = $planId;
+                        // opcional: recuperar a assinatura para garantir priceId
+                        $subscription = \Stripe\Subscription::retrieve($session->subscription);
+                        $priceId = $subscription->items->data[0]->price->id ?? null;
+                        $plan = $priceId ? Plan::where('stripe_price_id', $priceId)->first() : null;
+
                         $user->stripe_subscription_id = $session->subscription;
+                        if ($plan) {
+                            $user->plan_id = $plan->id;
+                        }
                         $user->save();
-                        Log::info("Webhook - Assinatura do usuário {$user->id} salva. Plano atualizado para {$planId}.");
                     }
                 }
                 break;
             case 'customer.subscription.updated':
-                Log::info('Webhook - Evento de atualização de assinatura recebido.');
-
                 $subscription = $event->data->object;
-
-                // Apenas processar se a assinatura estiver ativa
-                if ($subscription->status == 'active') {
-                    // Obtém o novo price_id do item da assinatura
-                    $newPriceId = $subscription->items->data[0]->price->id;
-
-                    // Supondo que você tenha uma forma de mapear o price_id do Stripe para o seu plan_id interno
-                    // Exemplo:
-                    $plan = Plan::where('stripe_price_id', $newPriceId)->first();
-
-                    if ($plan) {
-                        // Encontra o usuário pela assinatura do Stripe
-                        $user = User::where('stripe_subscription_id', $subscription->id)->first();
-                        if ($user) {
-                            $user->plan_id = $plan->id;
-                            $user->save();
-                            Log::info("Webhook - Plano do usuário {$user->id} atualizado para o plano {$plan->id}.");
+                $valid = in_array($subscription->status, ['active', 'trialing', 'incomplete', 'past_due', 'unpaid', 'paused'], true);
+                if ($valid) {
+                    $newPriceId = $subscription->items->data[0]->price->id ?? null;
+                    if ($newPriceId) {
+                        $plan = Plan::where('stripe_price_id', $newPriceId)->first();
+                        if ($plan) {
+                            $user = User::where('stripe_subscription_id', $subscription->id)->first();
+                            if ($user) {
+                                $user->plan_id = $plan->id;
+                                $user->save();
+                            }
                         }
                     }
                 }
@@ -187,59 +181,83 @@ class PlanController extends Controller
 
         return response()->json(['message' => 'Nenhum plano pago para cancelar.'], 400);
     }
-
     public function getSubscriptionDetails()
     {
         $user = Auth::user();
 
         if (empty($user->stripe_customer_id)) {
-            // Retornar um JSON limpo para o front-end.
-            // Assim, o front-end sabe que não há assinatura para exibir.
             return response()->json([
+                'subscription' => null,
                 'current_plan' => null,
                 'current_period_end' => null,
-                'invoices' => []
+                'invoices' => [],
             ]);
         }
 
         \Stripe\Stripe::setApiKey(env('STRIPE_SECRET_KEY'));
 
         try {
-            $subscriptions = Subscription::all([
+            // 1) Pega assinaturas sem filtrar por status e escolhe a mais recente "válida"
+            $subs = \Stripe\Subscription::all([
                 'customer' => $user->stripe_customer_id,
-                'limit' => 1
+                'limit'    => 10,
+                // 'expand' => ['data.items.data.price'], // opcional
             ]);
 
-            $subscription = $subscriptions->data[0] ?? null;
-            Log::info('Stripe Subscriptions Response: ' . json_encode($subscriptions));
+            $validStatuses = ['active', 'trialing', 'incomplete', 'past_due', 'unpaid', 'paused'];
+            $subscription = collect($subs->data)
+                ->sortByDesc('created')
+                ->first(fn($s) => in_array($s->status, $validStatuses, true));
 
-            // Se não houver uma assinatura ativa, retornar valores nulos.
+            // 2) Se não houver assinatura válida, retorna vazio
             if (!$subscription) {
                 return response()->json([
+                    'subscription' => null,
                     'current_plan' => null,
                     'current_period_end' => null,
-                    'invoices' => []
+                    'invoices' => [],
                 ]);
             }
-            Log::info('Subscription current_period_end: ' . $subscription->current_period_end);
 
-            $invoices = Invoice::all([
+            // 3) Deriva plano e período
+            $priceId = $subscription->items->data[0]->price->id ?? null;
+            $periodEnd = $subscription->current_period_end ?? null;
+
+            // 4) Fallback opcional: tenta pegar do upcoming invoice
+            if (!$periodEnd) {
+                try {
+                    $upcoming = \Stripe\Invoice::upcoming([
+                        'customer'     => $user->stripe_customer_id,
+                        'subscription' => $subscription->id,
+                    ]);
+                    // tenta usar a data da linha ou do próprio invoice
+                    $periodEnd = $upcoming->lines->data[0]->period->end
+                        ?? $upcoming->period_end
+                        ?? null;
+                } catch (\Exception $e) {
+                    // se não houver upcoming (p.ex. no fim do ciclo), segue sem fallback
+                }
+            }
+
+            // 5) Faturas (histórico)
+            $invoices = \Stripe\Invoice::all([
                 'customer' => $user->stripe_customer_id,
-                'limit' => 10
+                'limit'    => 10
             ]);
 
             return response()->json([
-                'current_plan' => $subscription->plan->id,
-                'current_period_end' => $subscription->current_period_end,
-                'invoices' => $invoices->data,
+                'subscription'       => $subscription,         // objeto completo (tem current_period_end)
+                'current_plan'       => $priceId,              // ajuda no front
+                'current_period_end' => $periodEnd,            // em segundos
+                'invoices'           => $invoices->data,
             ]);
         } catch (\Stripe\Exception\ApiErrorException $e) {
-            // Em caso de erro na API do Stripe, também retornar nulo.
             Log::error('Erro ao buscar detalhes da assinatura: ' . $e->getMessage());
             return response()->json([
+                'subscription' => null,
                 'current_plan' => null,
                 'current_period_end' => null,
-                'invoices' => []
+                'invoices' => [],
             ]);
         }
     }
