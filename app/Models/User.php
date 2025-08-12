@@ -29,7 +29,9 @@ class User extends Authenticatable implements JWTSubject
         'address',
         'stripe_subscription_id',
         'stripe_customer_id',
-        'phone'
+        'phone',
+        'cancel_at_period_end',
+        'current_period_end'
     ];
 
     /**
@@ -55,6 +57,8 @@ class User extends Authenticatable implements JWTSubject
             'password' => 'hashed',
             'plan_id' => 'integer',
             'stripe_subscription_id' => 'string',
+            'cancel_at_period_end' => 'boolean',
+            'current_period_end'   => 'datetime',
         ];
     }
 
