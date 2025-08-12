@@ -274,7 +274,7 @@ class PlanController extends Controller
             // - imediato: já volte pro plano gratuito
             // - fim do período: salve a data para exibir no UI
             if (!$atPeriodEnd && $subscription->status === 'canceled') {
-                $user->plan_id = 1;
+                $user->plan_id = 9;
                 $user->stripe_subscription_id = null;
                 $user->save();
             } else if ($atPeriodEnd) {
