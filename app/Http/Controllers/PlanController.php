@@ -130,34 +130,66 @@ class PlanController extends Controller
             case 'invoice.paid':
                 $invoice = $event->data->object;
 
-                $subscriptionId = $invoice->subscription;
-                $customerId     = $invoice->customer;
+                // 1) Descobrir o subscriptionId (várias formas, p/ compatibilidade)
+                $subscriptionId = $invoice->subscription
+                    ?? ($invoice->parent->subscription_details->subscription ?? null)
+                    ?? (optional($invoice->lines->data[0]->parent)->subscription_item_details->subscription ?? null);
 
+                $customerId = is_string($invoice->customer) ? $invoice->customer : ($invoice->customer->id ?? null);
+
+                // 2) Pegar a linha da assinatura (evita proration/tax)
                 $line = null;
                 foreach ($invoice->lines->data as $l) {
-                    if ((($l->type ?? null) === 'subscription') || !empty($l->subscription_item)) {
+                    $isSubLine = (($l->type ?? null) === 'subscription')
+                        || !empty(optional($l->parent)->subscription_item_details);
+                    if ($isSubLine) {
                         $line = $l;
                         break;
                     }
                 }
-                $priceObj = $line->price ?? null;
-                $priceId  = is_string($priceObj) ? $priceObj : ($priceObj->id ?? null);
 
-                // fallback se não achou o price pela fatura
+                // 3) Extrair o priceId (novo e antigo formato)
+                $priceId = null;
+                if ($line) {
+                    // API nova (basil): string em pricing.price_details.price
+                    if (!empty(optional($line->pricing)->price_details->price)) {
+                        $priceId = $line->pricing->price_details->price; // já é string "price_..."
+                    }
+                    // API antiga: objeto price/id
+                    elseif (!empty($line->price)) {
+                        $priceId = is_string($line->price) ? $line->price : ($line->price->id ?? null);
+                    }
+                }
+
+                // Fallback final: buscar na assinatura se ainda não achou o price
                 if (!$priceId && $subscriptionId) {
                     $sub = \Stripe\Subscription::retrieve($subscriptionId);
                     $priceId = $sub->items->data[0]->price->id ?? null;
                 }
 
+                // 4) Encontrar o usuário e salvar
                 $user = User::where('stripe_customer_id', $customerId)->first()
-                    ?: User::where('stripe_subscription_id', $subscriptionId)->first();
+                    ?: ($subscriptionId ? User::where('stripe_subscription_id', $subscriptionId)->first() : null);
 
                 if ($user) {
-                    $user->stripe_subscription_id = $subscriptionId;
-                    if ($priceId && ($plan = Plan::where('stripe_price_id', $priceId)->first())) {
-                        $user->plan_id = $plan->id;
+                    if ($subscriptionId) {
+                        $user->stripe_subscription_id = $subscriptionId;
+                    }
+                    if ($priceId) {
+                        if ($plan = Plan::where('stripe_price_id', $priceId)->first()) {
+                            $user->plan_id = $plan->id;
+                        } else {
+                            Log::warning('Price não mapeado em plans', ['price_id' => $priceId]);
+                        }
                     }
                     $user->save();
+                    Log::info('invoice.paid atualizado', [
+                        'user_id' => $user->id,
+                        'plan_id' => $user->plan_id,
+                        'stripe_subscription_id' => $user->stripe_subscription_id
+                    ]);
+                } else {
+                    Log::warning('Usuário não encontrado para invoice.paid', compact('customerId', 'subscriptionId'));
                 }
                 break;
             case 'customer.subscription.created':
