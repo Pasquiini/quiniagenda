@@ -130,27 +130,33 @@ class PlanController extends Controller
             case 'invoice.paid':
                 $invoice = $event->data->object;
 
-                $subscriptionId = $invoice->subscription; // ex: sub_...
-                $customerId     = $invoice->customer;     // ex: cus_...
-                $priceId        = $invoice->lines->data[0]->price->id ?? null;
+                $subscriptionId = $invoice->subscription;
+                $customerId     = $invoice->customer;
 
-                // Ideal: tenha stripe_customer_id salvo no usuário
-                $user = User::where('stripe_customer_id', $customerId)->first();
-
-                // fallback
-                if (!$user && $subscriptionId) {
-                    $user = User::where('stripe_subscription_id', $subscriptionId)->first();
+                $line = null;
+                foreach ($invoice->lines->data as $l) {
+                    if ((($l->type ?? null) === 'subscription') || !empty($l->subscription_item)) {
+                        $line = $l;
+                        break;
+                    }
                 }
+                $priceObj = $line->price ?? null;
+                $priceId  = is_string($priceObj) ? $priceObj : ($priceObj->id ?? null);
+
+                // fallback se não achou o price pela fatura
+                if (!$priceId && $subscriptionId) {
+                    $sub = \Stripe\Subscription::retrieve($subscriptionId);
+                    $priceId = $sub->items->data[0]->price->id ?? null;
+                }
+
+                $user = User::where('stripe_customer_id', $customerId)->first()
+                    ?: User::where('stripe_subscription_id', $subscriptionId)->first();
 
                 if ($user) {
                     $user->stripe_subscription_id = $subscriptionId;
-
-                    if ($priceId) {
-                        if ($plan = Plan::where('stripe_price_id', $priceId)->first()) {
-                            $user->plan_id = $plan->id;
-                        }
+                    if ($priceId && ($plan = Plan::where('stripe_price_id', $priceId)->first())) {
+                        $user->plan_id = $plan->id;
                     }
-
                     $user->save();
                 }
                 break;
