@@ -247,7 +247,7 @@ class PlanController extends Controller
     public function cancelPlan()
     {
         $user = Auth::user();
-        if ($user && $user->plan_id !== 1 && $user->stripe_subscription_id) {
+        if ($user && $user->plan_id !== 9 && $user->stripe_subscription_id) {
             \Stripe\Stripe::setApiKey(env('STRIPE_SECRET_KEY'));
 
             $subscription = \Stripe\Subscription::retrieve($user->stripe_subscription_id);
