@@ -127,6 +127,46 @@ class PlanController extends Controller
                     }
                 }
                 break;
+            case 'invoice.paid':
+                $invoice = $event->data->object;
+
+                $subscriptionId = $invoice->subscription; // ex: sub_...
+                $customerId     = $invoice->customer;     // ex: cus_...
+                $priceId        = $invoice->lines->data[0]->price->id ?? null;
+
+                // Ideal: tenha stripe_customer_id salvo no usuário
+                $user = User::where('stripe_customer_id', $customerId)->first();
+
+                // fallback
+                if (!$user && $subscriptionId) {
+                    $user = User::where('stripe_subscription_id', $subscriptionId)->first();
+                }
+
+                if ($user) {
+                    $user->stripe_subscription_id = $subscriptionId;
+
+                    if ($priceId) {
+                        if ($plan = Plan::where('stripe_price_id', $priceId)->first()) {
+                            $user->plan_id = $plan->id;
+                        }
+                    }
+
+                    $user->save();
+                }
+                break;
+            case 'customer.subscription.created':
+                $subscription = $event->data->object;
+                $priceId = $subscription->items->data[0]->price->id ?? null;
+
+                $user = User::where('stripe_customer_id', $subscription->customer)->first();
+                if ($user) {
+                    $user->stripe_subscription_id = $subscription->id;
+                    if ($priceId && ($plan = Plan::where('stripe_price_id', $priceId)->first())) {
+                        $user->plan_id = $plan->id;
+                    }
+                    $user->save();
+                }
+                break;
             case 'customer.subscription.updated':
                 $subscription = $event->data->object;
                 $valid = in_array($subscription->status, ['active', 'trialing', 'incomplete', 'past_due', 'unpaid', 'paused'], true);
@@ -232,6 +272,7 @@ class PlanController extends Controller
                 'customer' => $user->stripe_customer_id,
                 'limit'    => 10
             ]);
+
 
             return response()->json([
                 'subscription'       => $subscription,
