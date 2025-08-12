@@ -244,20 +244,62 @@ class PlanController extends Controller
         return response()->json(['message' => 'Webhook processado com sucesso'], 200);
     }
 
-    public function cancelPlan()
+    public function cancelPlan(Request $request)
     {
         $user = Auth::user();
-        if ($user && $user->plan_id !== 9 && $user->stripe_subscription_id) {
-            \Stripe\Stripe::setApiKey(env('STRIPE_SECRET_KEY'));
 
-            $subscription = \Stripe\Subscription::retrieve($user->stripe_subscription_id);
-            $subscription->cancel();
-
-            // O webhook irá lidar com a atualização final do banco de dados
-            return response()->json(['message' => 'Solicitação de cancelamento enviada. A confirmação será recebida em breve.'], 200);
+        if (!$user || !$user->stripe_subscription_id) {
+            return response()->json(['message' => 'Nenhuma assinatura ativa para cancelar.'], 400);
         }
 
-        return response()->json(['message' => 'Nenhum plano pago para cancelar.'], 400);
+        // true = cancelar no fim do período; false = cancelar imediatamente
+        $atPeriodEnd = $request->boolean('at_period_end', true);
+
+        // Pegue a secret do config/services.php: ['stripe' => ['secret' => env('STRIPE_SECRET')]]
+        $stripe = new \Stripe\StripeClient(config('services.stripe.secret'));
+
+        try {
+            if ($atPeriodEnd) {
+                // agenda o cancelamento no fim do ciclo
+                $subscription = $stripe->subscriptions->update(
+                    $user->stripe_subscription_id,
+                    ['cancel_at_period_end' => true]
+                );
+            } else {
+                // cancela imediatamente
+                $subscription = $stripe->subscriptions->cancel($user->stripe_subscription_id, []);
+            }
+
+            // (Opcional) Atualização otimista local:
+            // - imediato: já volte pro plano gratuito
+            // - fim do período: salve a data para exibir no UI
+            if (!$atPeriodEnd && $subscription->status === 'canceled') {
+                $user->plan_id = 1;
+                $user->stripe_subscription_id = null;
+                $user->save();
+            } else if ($atPeriodEnd) {
+                $user->cancel_at_period_end = true;
+                $user->current_period_end = \Carbon\Carbon::createFromTimestamp($subscription->current_period_end);
+                $user->save();
+            }
+
+            return response()->json([
+                'message' => $atPeriodEnd
+                    ? 'Cancelamento agendado para o fim do período.'
+                    : 'Assinatura cancelada imediatamente.',
+                'status' => $subscription->status,
+                'cancel_at_period_end' => (bool) $subscription->cancel_at_period_end,
+                'current_period_end' => $subscription->current_period_end,
+            ], 200);
+        } catch (\Stripe\Exception\ApiErrorException $e) {
+            report($e);
+            return response()->json([
+                'message' => 'Erro ao cancelar no Stripe: ' . $e->getMessage()
+            ], 422);
+        } catch (\Throwable $e) {
+            report($e);
+            return response()->json(['message' => 'Erro interno ao cancelar.'], 500);
+        }
     }
     public function getSubscriptionDetails()
     {
