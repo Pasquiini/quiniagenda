@@ -11,6 +11,7 @@ use App\Models\HorarioDisponivel;
 use App\Models\HorarioExcecao;
 use App\Models\Servico;
 use App\Models\User;
+use App\Services\AsaasService;
 use Carbon\Carbon;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Auth;
@@ -50,8 +51,74 @@ class AgendamentoController extends Controller
 
         return response()->json($servicos);
     }
+    private function tlv($id, $value)
+    {
+        $len = str_pad(strlen($value), 2, '0', STR_PAD_LEFT); // ASCII only
+        return $id . $len . $value;
+    }
 
-    public function storePublicBooking(int $userId, Request $request)
+    private function crc16($payload)
+    {
+        $poly = 0x1021;
+        $crc = 0xFFFF;
+        foreach (unpack('C*', $payload) as $b) {
+            $crc ^= ($b << 8);
+            for ($i = 0; $i < 8; $i++) {
+                $crc = ($crc & 0x8000) ? (($crc << 1) ^ $poly) : ($crc << 1);
+                $crc &= 0xFFFF;
+            }
+        }
+        return strtoupper(str_pad(dechex($crc), 4, '0', STR_PAD_LEFT));
+    }
+
+    // mantém só ASCII, tira acentos e limita tamanho
+    private function normalizePixText(string $s, int $maxLen, bool $upper = true): string
+    {
+        $s = iconv('UTF-8', 'ASCII//TRANSLIT//IGNORE', $s); // remove acentos
+        $s = preg_replace('/[^A-Za-z0-9 .,-]/', '', $s ?? ''); // apenas caracteres seguros
+        $s = trim($s);
+        if ($upper) $s = strtoupper($s);
+        return substr($s, 0, $maxLen);
+    }
+
+    private function gerarPixPayload($pixKey, $amount, $description, $txid, $merchantName, $merchantCity)
+    {
+        // Normaliza campos
+        $merchantName  = $this->normalizePixText($merchantName ?: 'NA', 25, true);
+        $merchantCity  = $this->normalizePixText($merchantCity ?: 'NA', 15, true);
+        $description   = $this->normalizePixText($description ?: '', 99, false);
+        $txid          = $this->normalizePixText($txid ?: 'TX', 25, false);
+        $pixKey        = trim($pixKey); // pode ter @, +, etc. (fica no ASCII)
+
+        // 26 - Merchant Account Info (BR Code)
+        $mai = $this->tlv('00', 'br.gov.bcb.pix')
+            . $this->tlv('01', $pixKey)
+            . ($description !== '' ? $this->tlv('02', $description) : '');
+
+        // 62 - Additional Data Field (TXID)
+        $adf = $this->tlv('05', $txid);
+
+        // Payload base (estático -> 11)
+        $payload =
+            $this->tlv('00', '01') .                 // Payload Format Indicator
+            $this->tlv('01', '11') .                 // Point of Initiation Method (estático)
+            $this->tlv('26', $mai) .                 // Merchant Account Info
+            $this->tlv('52', '0000') .               // MCC
+            $this->tlv('53', '986') .                // BRL
+            ($amount !== '' ? $this->tlv('54', $amount) : '') .
+            $this->tlv('58', 'BR') .                 // País
+            $this->tlv('59', $merchantName) .        // Nome recebedor
+            $this->tlv('60', $merchantCity) .        // Cidade
+            $this->tlv('62', $adf);                  // Dados adicionais (TXID)
+
+        // CRC16 (campo 63)
+        $payloadSemCRC = $payload . '63' . '04';
+        $crc = $this->crc16($payloadSemCRC);
+
+        return $payloadSemCRC . $crc;
+    }
+
+    public function storePublicBooking(int $userId, Request $request, AsaasService $asaasService)
     {
         $profissional = User::findOrFail($userId);
 
@@ -62,22 +129,27 @@ class AgendamentoController extends Controller
         $validated = $request->validate([
             'cliente_name' => 'required|string|max:255',
             'cliente_email' => 'required|email|max:255',
-            'cliente_phone' => 'required|string|max:20', // Adicionamos o telefone
+            'cliente_phone' => 'required|string|max:20',
+            'cliente_cpf_cnpj' => 'nullable|string|max:20',
             'servico_id' => ['required', 'exists:servicos,id', Rule::in($profissional->servicos()->pluck('id'))],
-            'data_hora' => 'required|date_format:Y-m-d H:i:s', // Formato datetime
+            'data_hora' => 'required|date_format:Y-m-d H:i:s',
+            'payment_option' => 'required|string|in:online,presencial'
         ]);
         $formattedPhone = $this->formatPhoneNumberForDb($validated['cliente_phone']);
 
-        $cliente = Cliente::firstOrCreate(
-            ['email' => $validated['cliente_email']],
-            ['nome' => $validated['cliente_name'], 'phone' => $formattedPhone, 'user_id' => $profissional->id]
+        $cliente = Cliente::updateOrCreate(
+            ['email' => $validated['cliente_email'], 'user_id' => $profissional->id],
+            [
+                'nome' => $validated['cliente_name'],
+                'phone' => $validated['cliente_phone'],
+                'cpf_cnpj' => $validated['cliente_cpf_cnpj'],
+            ]
         );
-
         $agendamentoStart = new \DateTime($validated['data_hora']);
         $servico = Servico::findOrFail($validated['servico_id']);
         $agendamentoEnd = (clone $agendamentoStart)->modify('+' . $servico->duration_minutes . ' minutes');
 
-        // Lógica de verificação de disponibilidade
+        // Lógica de verificação de disponibilidade (mantida)
         $dayOfWeek = strtolower($agendamentoStart->format('l'));
         $horarioProfissional = $profissional->horariosDisponiveis()
             ->where('dia_da_semana', $dayOfWeek)
@@ -110,15 +182,58 @@ class AgendamentoController extends Controller
             }
         }
 
+        // Fim da lógica de verificação de disponibilidade
+
+        // Determina o status inicial do pagamento com base na opção do cliente
+        $initialPaymentStatus = $validated['payment_option'] === 'online' ? 'Aguardando Pagamento' : 'Pendente';
+
         $agendamento = $profissional->agendamentos()->create([
             'cliente_id' => $cliente->id,
             'servico_id' => $validated['servico_id'],
             'data_hora' => $agendamentoStart,
-            'status' => 'pendente'
+            'status' => 'pendente',
+            'payment_status' => $initialPaymentStatus,
+            'payment_option' => $validated['payment_option'],
+            'payment_amount' => $servico->valor,
         ]);
 
-        $agendamento->load('cliente', 'user', 'servico');
+        $pixData = null;
+        $pixConfig = $profissional->pixConfig;
+        // Se o cliente escolheu pagamento online, gera a cobrança Pix
+        if ($validated['payment_option'] === 'online') {
+            $chavePix = $pixConfig->pix_key;
+            $valor = number_format($servico->valor, 2, '.', '');           // "20.00"
+            $descricao = "Agendamento de servico {$servico->nome}";        // sem acento
+            $txid = substr(uniqid('AGD'), 0, 25);
 
+            $merchantName = $profissional->fantasia ?: $profissional->name;
+            $merchantCity = 'BRASIL'; // se tiver cidade no cadastro, use-a aqui
+
+            $payload = $this->gerarPixPayload(
+                $chavePix,
+                $valor,
+                $descricao,
+                $txid,
+                $merchantName,
+                $merchantCity
+            );
+
+            // ATENÇÃO: use rawurlencode
+            $qrCodeUrl = 'https://chart.googleapis.com/chart?chs=300x300&cht=qr&chl=' . rawurlencode($payload);
+
+            $pixData = [
+                'encodedImage' => $qrCodeUrl,
+                'payload' => $payload,
+            ];
+
+            $agendamento->update([
+                'pix_txid'       => $txid,
+                'pix_qrcode_url' => $qrCodeUrl,
+                'pix_copia_cola' => $payload,
+            ]);
+        }
+
+        $agendamento->load('cliente', 'user', 'servico');
 
         // SendWhatsappMessageJob::dispatch($agendamento);
 
@@ -126,9 +241,9 @@ class AgendamentoController extends Controller
             'message' => 'Agendamento criado com sucesso!',
             'agendamento' => $agendamento,
             'cliente_phone' => $cliente->phone,
+            'pix' => $pixData
         ], 201);
     }
-
     private function formatPhoneNumberForDb(string $phone): string
     {
         // Remove caracteres não numéricos
@@ -363,26 +478,19 @@ class AgendamentoController extends Controller
         }
 
         $validated = $request->validate([
-            'cliente_id' => ['required', 'exists:clientes,id', Rule::in(Auth::user()->clientes()->pluck('id'))],
+            'cliente_id' => ['required', 'exists:clientes,id'],
             'servico_id' => ['required', 'exists:servicos,id', Rule::in(Auth::user()->servicos()->pluck('id'))],
             'data_hora' => 'required|date',
             'status' => 'required|in:pendente,confirmado,reagendado,cancelado',
+            'payment_status' => 'nullable|string|in:Pendente,Aguardando Pagamento Online,Pago Presencial,Pago Online', // NOVO: Validação
+            'payment_method' => 'nullable|string|in:Dinheiro,Cartao,Pix Presencial,Pix Online', // NOVO: Validação
         ]);
 
-        // Verifica se o status ou a data_hora foram alterados
-        // $shouldSendWhatsapp = $request->input('status') !== $agendamento->status || $request->input('data_hora') !== $agendamento->data_hora;
-
-        // Atualiza o agendamento
+        // ATUALIZAÇÃO: Adicionamos os novos campos ao array de atualização
         $agendamento->update($validated);
-
-        // Dispara o Job se houver uma mudança no status ou na data_hora
-        // if ($shouldSendWhatsapp) {
-        //     SendWhatsappMessageJob::dispatch($agendamento);
-        // }
 
         return response()->json(['message' => 'Agendamento atualizado com sucesso!', 'agendamento' => $agendamento]);
     }
-
     public function destroy(Agendamento $agendamento)
     {
         if (Auth::id() !== $agendamento->user_id) {
@@ -404,5 +512,29 @@ class AgendamentoController extends Controller
 
         // Retorna o agendamento em formato JSON
         return response()->json($agendamento);
+    }
+
+    public function markAsPaid(Request $request, int $agendamentoId)
+    {
+        $agendamento = Agendamento::with(['user'])->findOrFail($agendamentoId);
+
+        if ($request->user()->id !== $agendamento->user->id) {
+            return response()->json(['message' => 'Não autorizado.'], 403);
+        }
+
+        $validated = $request->validate([
+            'payment_method' => 'required|string|in:Dinheiro,Cartao,Pix Presencial,Pix Online', // NOVO: Adicionamos Pix Online
+        ]);
+        $paymentStatus = ($validated['payment_method'] === 'Pix Online') ? 'Pago Online' : 'Pago Presencial';
+        $agendamento->update([
+            'status' => 'Confirmado',
+            'payment_status' => $paymentStatus, // Se o pagamento for online, o status deve ser "Pago Online"
+            'payment_method' => $validated['payment_method'],
+        ]);
+
+        return response()->json([
+            'message' => 'Pagamento confirmado com sucesso!',
+            'agendamento' => $agendamento,
+        ], 200);
     }
 }

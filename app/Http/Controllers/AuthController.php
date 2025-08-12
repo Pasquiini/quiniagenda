@@ -99,4 +99,17 @@ class AuthController extends Controller
         // Retorna os dados do usuário autenticado
         return response()->json($request->user());
     }
+
+    public function hasPix(int $userId)
+    {
+        $profissional = User::find($userId);
+
+        if (!$profissional) {
+            return response()->json(['message' => 'Profissional não encontrado.'], 404);
+        }
+
+        $hasPixKey = (bool) $profissional->pixConfig;
+
+        return response()->json(['hasPixKey' => $hasPixKey]);
+    }
 }

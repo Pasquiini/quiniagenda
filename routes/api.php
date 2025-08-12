@@ -3,11 +3,14 @@
 use App\Http\Controllers\AuthController;
 use App\Http\Controllers\PlanController;
 use App\Http\Controllers\AgendamentoController;
+use App\Http\Controllers\AsaasWebhookController;
 use App\Http\Controllers\ClienteController;
 use App\Http\Controllers\DashboardController;
+use App\Http\Controllers\FinanceiroController;
 use App\Http\Controllers\HorarioDisponivelController;
 use App\Http\Controllers\HorarioExcecaoController;
 use App\Http\Controllers\OrcamentoController;
+use App\Http\Controllers\PixController;
 use App\Http\Controllers\PublicOrcamentoController;
 use App\Http\Controllers\ServicoController;
 use Illuminate\Http\Request;
@@ -23,6 +26,9 @@ Route::get('/booking/{userId}/services', [AgendamentoController::class, 'getPubl
 Route::get('/booking/{userId}/availability', [AgendamentoController::class, 'getAvailability']);
 Route::post('/booking/{userId}/create', [AgendamentoController::class, 'storePublicBooking']);
 Route::get('/booking/{userId}/availability/monthly/{year}/{month}/{servicoId}', [AgendamentoController::class, 'getMonthlyAvailability']);
+Route::post('/pix/webhook', [PixController::class, 'webhook']); // coloque um middleware para assinar/validar
+Route::get('/agendamentos/{agendamento}/payment-status', [PixController::class, 'paymentStatus']);
+Route::get('professional/{userId}/has-pix', [AuthController::class, 'hasPix']);
 
 // Rotas protegidas (precisam de autenticação JWT)
 Route::middleware('auth:api')->get('/subscription-details', [PlanController::class, 'getSubscriptionDetails']);
@@ -73,4 +79,10 @@ Route::middleware('auth:api')->group(function () {
     Route::get('/horario-excecoes', [HorarioExcecaoController::class, 'index']);
     Route::post('/horario-excecoes', [HorarioExcecaoController::class, 'store']);
     Route::delete('/horario-excecoes/{horarioExcecao}', [HorarioExcecaoController::class, 'destroy']);
+    Route::get('/financeiro/resumo', [FinanceiroController::class, 'getResumo']);
+    Route::get('/financeiro/pendencias', [FinanceiroController::class, 'getPendencias']);
+    Route::get('/pix-config', [PixController::class, 'show']);
+    Route::post('/pix-config', [PixController::class, 'store']);
+    Route::delete('/pix-config', [PixController::class, 'destroy']);
+    Route::post('/agendamentos/{agendamentoId}/mark-as-paid', [AgendamentoController::class, 'markAsPaid']);
 });

@@ -16,6 +16,13 @@ class Agendamento extends Model
         'data_hora',
         'observacoes',
         'status',
+        'payment_status',
+        'payment_method',
+        'payment_amount',
+        'pix_txid',
+        'pix_qrcode_url',
+        'pix_copia_cola',
+        'payment_option'
     ];
 
     public function user()
