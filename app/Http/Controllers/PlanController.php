@@ -31,59 +31,65 @@ class PlanController extends Controller
 
     public function subscribe(Request $request)
     {
-        \Stripe\Stripe::setApiKey(env('STRIPE_SECRET_KEY'));
         $request->validate(['plan_id' => 'required|exists:plans,id']);
 
         $plan = Plan::findOrFail($request->plan_id);
         $user = Auth::user();
 
-        if ($plan->price > 0 && empty($plan->stripe_price_id)) {
-            return response()->json(['error' => 'ID do preço do plano não encontrado.'], 400);
-        }
+        // Use config() (evita env cacheado)
+        $stripe = new \Stripe\StripeClient(config('services.stripe.secret'));
 
-        // Adicionamos a lógica para criar o cliente do Stripe antes de qualquer outra coisa
+        // cria customer se não existir
         if (empty($user->stripe_customer_id)) {
-            try {
-                $customer = Customer::create([
-                    'email' => $user->email,
-                    'name' => $user->name,
-                    'metadata' => ['app_user_id' => $user->id],
-                ]);
-                $user->stripe_customer_id = $customer->id;
-                $user->save();
-                Log::info('Novo cliente do Stripe criado e ID salvo.', ['customer_id' => $customer->id]);
-            } catch (\Stripe\Exception\ApiErrorException $e) {
-                Log::error('Erro ao criar cliente no Stripe: ' . $e->getMessage());
-                return response()->json(['error' => 'Erro ao criar cliente no Stripe.'], 500);
-            }
+            $customer = $stripe->customers->create([
+                'email' => $user->email,
+                'name'  => $user->name,
+                'metadata' => ['app_user_id' => $user->id],
+            ]);
+            $user->stripe_customer_id = $customer->id;
+            $user->save();
         }
 
-        $checkoutSessionData = [
+        // >>> DESVIO DO PLANO GRÁTIS <<<
+        if ((float)$plan->price === 0.0) {
+            // cancela sub atual (best-effort)
+            if ($user->stripe_subscription_id) {
+                $opts = [];
+                if (!empty($user->stripe_account_id)) $opts['stripe_account'] = $user->stripe_account_id;
+                try {
+                    $stripe->subscriptions->cancel($user->stripe_subscription_id, [], $opts);
+                } catch (\Throwable $e) {
+                    Log::warning('Falha ao cancelar sub ao migrar p/ free', ['err' => $e->getMessage()]);
+                }
+            }
+
+            // atualiza banco AGORA
+            $user->plan_id = (int)$plan->id; // ex.: 9
+            $user->stripe_subscription_id = null;
+            $user->cancel_at_period_end = null;
+            $user->current_period_end = null;
+            $user->save();
+
+            return response()->json(['ok' => true, 'mode' => 'free'], 200);
+        }
+
+        // fluxo pago normal
+        if (empty($plan->stripe_price_id)) {
+            return response()->json(['error' => 'Plano sem stripe_price_id'], 400);
+        }
+
+        $checkout_session = \Stripe\Checkout\Session::create([
             'payment_method_types' => ['card'],
-            'line_items' => [[
-                'price' => $plan->stripe_price_id,
-                'quantity' => 1,
-            ]],
+            'line_items' => [['price' => $plan->stripe_price_id, 'quantity' => 1]],
             'mode' => 'subscription',
             'success_url' => config('app.url') . '/dashboard?success=true',
-            'cancel_url' => config('app.url') . '/plans?canceled=true',
+            'cancel_url'  => config('app.url') . '/plans?canceled=true',
             'locale' => 'pt-BR',
-            'customer' => $user->stripe_customer_id, // Usamos o ID que acabamos de criar ou que já existia
-            'metadata' => [
-                'user_id' => $user->id,
-                'plan_id' => $plan->id,
-            ],
-        ];
+            'customer' => $user->stripe_customer_id,
+            'metadata' => ['user_id' => $user->id, 'plan_id' => $plan->id],
+        ]);
 
-        Log::info('Tentando criar checkout session com:', $checkoutSessionData);
-
-        try {
-            $checkout_session = \Stripe\Checkout\Session::create($checkoutSessionData);
-            return response()->json(['id' => $checkout_session->id]);
-        } catch (\Stripe\Exception\ApiErrorException $e) {
-            Log::error('Erro ao criar checkout session: ' . $e->getMessage());
-            return response()->json(['error' => $e->getMessage()], 500);
-        }
+        return response()->json(['id' => $checkout_session->id], 200);
     }
 
     public function handleWebhook(Request $request)
@@ -131,7 +137,7 @@ class PlanController extends Controller
                     // Sempre grave o customer
                     $user->stripe_customer_id = is_string($session->customer) ? $session->customer : ($session->customer->id ?? null);
 
-                    $isFree = ((int)($session->metadata->plan_id ?? 0) === $FREE_PLAN_ID) || ((int)$session->amount_total === 0);
+                    $isFree = ((int)($session->metadata->plan_id ?? 0) === $FREE_PLAN_ID);
 
                     if ($isFree) {
                         // Cancela sub de R$0 (se criada) só para não poluir o Stripe
