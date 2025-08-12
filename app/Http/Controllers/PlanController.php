@@ -89,159 +89,166 @@ class PlanController extends Controller
     public function handleWebhook(Request $request)
     {
         Log::info('Webhook do Stripe recebido.');
-        \Stripe\Stripe::setApiKey(env('STRIPE_SECRET_KEY'));
-        $endpointSecret = env('STRIPE_WEBHOOK_SECRET');
-        $payload = $request->getContent();
+
+        $endpointSecret = config('services.stripe.webhook_secret');
         $sigHeader = $request->header('Stripe-Signature');
-        $event = null;
+        $payload = $request->getContent();
 
         try {
-            $event = Webhook::constructEvent($payload, $sigHeader, $endpointSecret);
-        } catch (\UnexpectedValueException $e) {
-            Log::error('Webhook - Payload inválido: ' . $e->getMessage());
-            return response()->json(['error' => 'Invalid payload'], 400);
-        } catch (SignatureVerificationException $e) {
-            Log::error('Webhook - Assinatura inválida: ' . $e->getMessage());
-            return response()->json(['error' => 'Invalid signature'], 400);
+            $event = \Stripe\Webhook::constructEvent($payload, $sigHeader, $endpointSecret);
+        } catch (\Throwable $e) {
+            Log::error('Webhook inválido: ' . $e->getMessage());
+            return response()->json(['error' => 'invalid'], 400);
+        }
+
+        // StripeClient com a SECRET correta (atenção: live vs test)
+        $stripe = new \Stripe\StripeClient(config('services.stripe.secret'));
+
+        // Se for Stripe Connect, o ID da connected account vem aqui:
+        $requestOptions = [];
+        if (!empty($event->account)) {
+            $requestOptions['stripe_account'] = $event->account; // guarde isso no usuário também
         }
 
         switch ($event->type) {
-            // Este evento é disparado quando a assinatura é criada com sucesso
-            case 'checkout.session.completed':
-                $session = $event->data->object;
-                $userId = (int) ($session->metadata->user_id ?? 0);
+            case 'checkout.session.completed': {
+                    /** @var \Stripe\Checkout\Session $session */
+                    $session = $event->data->object;
 
-                if ($session->subscription && $userId) {
-                    $user = User::find($userId);
-                    if ($user) {
-                        // opcional: recuperar a assinatura para garantir priceId
-                        $subscription = \Stripe\Subscription::retrieve($session->subscription);
-                        $priceId = $subscription->items->data[0]->price->id ?? null;
-                        $plan = $priceId ? Plan::where('stripe_price_id', $priceId)->first() : null;
+                    $userId = (int)($session->metadata->user_id ?? 0);
+                    if (!$userId) break;
 
-                        $user->stripe_subscription_id = $session->subscription;
-                        if ($plan) {
+                    $user = \App\Models\User::find($userId);
+                    if (!$user) break;
+
+                    // Salva customer e subscription DIRETO da session
+                    $user->stripe_customer_id = is_string($session->customer) ? $session->customer : ($session->customer->id ?? null);
+                    $user->stripe_subscription_id = is_string($session->subscription) ? $session->subscription : null;
+
+                    // Se for Connect, salve a conta para usar em futuras chamadas
+                    if (!empty($event->account)) {
+                        $user->stripe_account_id = $event->account;
+                    }
+
+                    // Recupera a assinatura só para mapear price e datas
+                    if ($user->stripe_subscription_id) {
+                        $sub = $stripe->subscriptions->retrieve($user->stripe_subscription_id, [], $requestOptions);
+                        $priceId = $sub->items->data[0]->price->id ?? null;
+
+                        if ($priceId && ($plan = \App\Models\Plan::where('stripe_price_id', $priceId)->first())) {
                             $user->plan_id = $plan->id;
                         }
-                        $user->save();
+
+                        // datas com guard
+                        $ts = isset($sub->current_period_end) ? (int)$sub->current_period_end : null;
+                        $user->current_period_end = $ts ? \Carbon\Carbon::createFromTimestamp($ts) : null;
+                        $user->cancel_at_period_end = (bool)($sub->cancel_at_period_end ?? false);
                     }
+
+                    $user->save();
+                    break;
                 }
-                break;
-            case 'invoice.paid':
-                $invoice = $event->data->object;
 
-                // 1) Descobrir o subscriptionId (várias formas, p/ compatibilidade)
-                $subscriptionId = $invoice->subscription
-                    ?? ($invoice->parent->subscription_details->subscription ?? null)
-                    ?? (optional($invoice->lines->data[0]->parent)->subscription_item_details->subscription ?? null);
+            case 'invoice.paid': {
+                    /** @var \Stripe\Invoice $invoice */
+                    $invoice = $event->data->object;
 
-                $customerId = is_string($invoice->customer) ? $invoice->customer : ($invoice->customer->id ?? null);
+                    $customerId = is_string($invoice->customer) ? $invoice->customer : ($invoice->customer->id ?? null);
+                    if (!$customerId) break;
 
-                // 2) Pegar a linha da assinatura (evita proration/tax)
-                $line = null;
-                foreach ($invoice->lines->data as $l) {
-                    $isSubLine = (($l->type ?? null) === 'subscription')
-                        || !empty(optional($l->parent)->subscription_item_details);
-                    if ($isSubLine) {
-                        $line = $l;
+                    $user = \App\Models\User::where('stripe_customer_id', $customerId)->first();
+                    if (!$user) {
+                        Log::warning('invoice.paid sem usuário', ['customer' => $customerId]);
                         break;
                     }
-                }
 
-                // 3) Extrair o priceId (novo e antigo formato)
-                $priceId = null;
-                if ($line) {
-                    // API nova (basil): string em pricing.price_details.price
-                    if (!empty(optional($line->pricing)->price_details->price)) {
-                        $priceId = $line->pricing->price_details->price; // já é string "price_..."
-                    }
-                    // API antiga: objeto price/id
-                    elseif (!empty($line->price)) {
-                        $priceId = is_string($line->price) ? $line->price : ($line->price->id ?? null);
-                    }
-                }
-
-                // Fallback final: buscar na assinatura se ainda não achou o price
-                if (!$priceId && $subscriptionId) {
-                    $sub = \Stripe\Subscription::retrieve($subscriptionId);
-                    $priceId = $sub->items->data[0]->price->id ?? null;
-                }
-
-                // 4) Encontrar o usuário e salvar
-                $user = User::where('stripe_customer_id', $customerId)->first()
-                    ?: ($subscriptionId ? User::where('stripe_subscription_id', $subscriptionId)->first() : null);
-
-                if ($user) {
-                    if ($subscriptionId) {
-                        $user->stripe_subscription_id = $subscriptionId;
-                    }
-                    if ($priceId) {
-                        if ($plan = Plan::where('stripe_price_id', $priceId)->first()) {
-                            $user->plan_id = $plan->id;
-                        } else {
-                            Log::warning('Price não mapeado em plans', ['price_id' => $priceId]);
+                    // NÃO mexa em stripe_subscription_id aqui.
+                    // Descubra o price da linha de assinatura:
+                    $priceId = null;
+                    foreach ($invoice->lines->data as $line) {
+                        if (($line->type ?? null) === 'subscription') {
+                            if (!empty($line->price)) {
+                                $priceId = is_string($line->price) ? $line->price : ($line->price->id ?? null);
+                            }
+                            break;
                         }
                     }
+
+                    // Se não encontrou no invoice, busca na assinatura
+                    if (!$priceId && !empty($invoice->subscription)) {
+                        $sub = $stripe->subscriptions->retrieve($invoice->subscription, [], $requestOptions);
+                        $priceId = $sub->items->data[0]->price->id ?? null;
+                    }
+
+                    if ($priceId && ($plan = \App\Models\Plan::where('stripe_price_id', $priceId)->first())) {
+                        $user->plan_id = $plan->id;
+                    }
+
                     $user->save();
                     Log::info('invoice.paid atualizado', [
                         'user_id' => $user->id,
                         'plan_id' => $user->plan_id,
-                        'stripe_subscription_id' => $user->stripe_subscription_id
+                        'sub_id'  => $user->stripe_subscription_id,
                     ]);
-                } else {
-                    Log::warning('Usuário não encontrado para invoice.paid', compact('customerId', 'subscriptionId'));
+                    break;
                 }
-                break;
-            case 'customer.subscription.created':
-                $subscription = $event->data->object;
-                $priceId = $subscription->items->data[0]->price->id ?? null;
 
-                $user = User::where('stripe_customer_id', $subscription->customer)->first();
-                if ($user) {
-                    $user->stripe_subscription_id = $subscription->id;
-                    if ($priceId && ($plan = Plan::where('stripe_price_id', $priceId)->first())) {
-                        $user->plan_id = $plan->id;
-                    }
-                    $user->save();
-                }
-                break;
-            case 'customer.subscription.updated':
-                $subscription = $event->data->object;
-                $valid = in_array($subscription->status, ['active', 'trialing', 'incomplete', 'past_due', 'unpaid', 'paused'], true);
-                if ($valid) {
-                    $newPriceId = $subscription->items->data[0]->price->id ?? null;
-                    if ($newPriceId) {
-                        $plan = Plan::where('stripe_price_id', $newPriceId)->first();
-                        if ($plan) {
-                            $user = User::where('stripe_subscription_id', $subscription->id)->first();
-                            if ($user) {
-                                $user->plan_id = $plan->id;
-                                $user->save();
-                            }
+            case 'customer.subscription.created': {
+                    $sub = $event->data->object;
+                    $user = \App\Models\User::where('stripe_customer_id', $sub->customer)->first();
+                    if ($user) {
+                        $user->stripe_subscription_id = $sub->id; // confirma o ID
+                        $priceId = $sub->items->data[0]->price->id ?? null;
+                        if ($priceId && ($plan = \App\Models\Plan::where('stripe_price_id', $priceId)->first())) {
+                            $user->plan_id = $plan->id;
                         }
+                        $ts = isset($sub->current_period_end) ? (int)$sub->current_period_end : null;
+                        $user->current_period_end = $ts ? \Carbon\Carbon::createFromTimestamp($ts) : null;
+                        $user->cancel_at_period_end = (bool)($sub->cancel_at_period_end ?? false);
+                        if (!empty($event->account)) $user->stripe_account_id = $event->account;
+                        $user->save();
                     }
+                    break;
                 }
-                break;
-            // Este evento é disparado quando a assinatura é cancelada
-            case 'customer.subscription.deleted':
-                Log::info('Webhook - Evento de cancelamento de assinatura recebido.');
-                $subscription = $event->data->object;
 
-                $user = User::where('stripe_subscription_id', $subscription->id)->first();
+            case 'customer.subscription.updated': {
+                    $sub = $event->data->object;
 
-                if ($user) {
-                    $user->plan_id = 1; // Define o plano como o gratuito
-                    $user->stripe_subscription_id = null; // Limpa o ID da assinatura
-                    $user->save();
-                    Log::info("Webhook - Assinatura de {$user->id} cancelada. Plano alterado para 1 (Gratuito).");
+                    $user = \App\Models\User::where('stripe_subscription_id', $sub->id)->first()
+                        ?: \App\Models\User::where('stripe_customer_id', $sub->customer)->first();
+
+                    if ($user) {
+                        // atualiza plano pelo price
+                        $priceId = $sub->items->data[0]->price->id ?? null;
+                        if ($priceId && ($plan = \App\Models\Plan::where('stripe_price_id', $priceId)->first())) {
+                            $user->plan_id = $plan->id;
+                        }
+                        $ts = isset($sub->current_period_end) ? (int)$sub->current_period_end : null;
+                        $user->current_period_end = $ts ? \Carbon\Carbon::createFromTimestamp($ts) : null;
+                        $user->cancel_at_period_end = (bool)($sub->cancel_at_period_end ?? false);
+                        $user->save();
+                    }
+                    break;
                 }
-                break;
+
+            case 'customer.subscription.deleted': {
+                    $sub = $event->data->object;
+                    $user = \App\Models\User::where('stripe_subscription_id', $sub->id)->first();
+                    if ($user) {
+                        $user->plan_id = 1;
+                        $user->stripe_subscription_id = null;
+                        $user->cancel_at_period_end = null;
+                        $user->current_period_end = null;
+                        $user->save();
+                    }
+                    break;
+                }
+
             default:
-                Log::info('Webhook - Outro tipo de evento recebido: ' . $event->type);
-                break;
+                Log::info('Webhook ignorado: ' . $event->type);
         }
 
-        return response()->json(['message' => 'Webhook processado com sucesso'], 200);
+        return response()->json(['ok' => true]);
     }
 
     public function cancelPlan(Request $request)
@@ -252,50 +259,94 @@ class PlanController extends Controller
             return response()->json(['message' => 'Nenhuma assinatura ativa para cancelar.'], 400);
         }
 
-        // true = cancelar no fim do período; false = cancelar imediatamente
         $atPeriodEnd = $request->boolean('at_period_end', true);
 
-        // Pegue a secret do config/services.php: ['stripe' => ['secret' => env('STRIPE_SECRET')]]
         $stripe = new \Stripe\StripeClient(config('services.stripe.secret'));
 
+        // Se usar Stripe Connect, inclua a conta conectada nas chamadas
+        $requestOptions = [];
+        if (!empty($user->stripe_account_id)) {
+            $requestOptions['stripe_account'] = $user->stripe_account_id;
+        }
+
+        // helper pra não repetir
+        $markLocalAsCanceled = function () use ($user) {
+            $user->plan_id = 9; // seu plano gratuito
+            $user->stripe_subscription_id = null;
+            $user->cancel_at_period_end = null;
+            $user->current_period_end = null;
+            $user->save();
+        };
+
+        // helper p/ setar datas com guard e evitar Carbon null
+        $setPeriodFields = function ($sub) use ($user) {
+            $ts = isset($sub->current_period_end) ? (int)$sub->current_period_end : null;
+            $user->cancel_at_period_end = (bool)($sub->cancel_at_period_end ?? false);
+            $user->current_period_end   = $ts ? \Carbon\Carbon::createFromTimestamp($ts) : null;
+            $user->save();
+        };
+
         try {
+            // 1) Recupera a assinatura primeiro (e já trata idempotência)
+            $subscription = $stripe->subscriptions->retrieve($user->stripe_subscription_id, [], $requestOptions);
+
+            if (($subscription->status ?? null) === 'canceled') {
+                // Já estava cancelada → alinhar local e retornar sucesso
+                $markLocalAsCanceled();
+                return response()->json(['message' => 'Assinatura já estava cancelada.'], 200);
+            }
+
+            // 2) Cancelar (no fim do período ou agora)
             if ($atPeriodEnd) {
-                // agenda o cancelamento no fim do ciclo
                 $subscription = $stripe->subscriptions->update(
                     $user->stripe_subscription_id,
-                    ['cancel_at_period_end' => true]
+                    ['cancel_at_period_end' => true],
+                    $requestOptions
                 );
+                $setPeriodFields($subscription);
+
+                return response()->json([
+                    'message' => 'Cancelamento agendado para o fim do período.',
+                    'status'  => $subscription->status,
+                    'cancel_at_period_end' => (bool)$subscription->cancel_at_period_end,
+                    'current_period_end'   => $subscription->current_period_end,
+                ], 200);
             } else {
-                // cancela imediatamente
-                $subscription = $stripe->subscriptions->cancel($user->stripe_subscription_id, []);
+                $subscription = $stripe->subscriptions->cancel($user->stripe_subscription_id, [], $requestOptions);
+                // cancelou de vez: já limpa local
+                if (($subscription->status ?? null) === 'canceled') {
+                    $markLocalAsCanceled();
+                }
+                return response()->json([
+                    'message' => 'Assinatura cancelada imediatamente.',
+                    'status'  => $subscription->status,
+                ], 200);
+            }
+        } catch (\Stripe\Exception\InvalidRequestException $e) {
+            $msg = $e->getMessage() ?? '';
+
+            // Caso 1: assinatura não existe neste ambiente/conta (mismatch live/test ou Connect)
+            if (stripos($msg, 'No such subscription') !== false) {
+                $markLocalAsCanceled();
+                return response()->json([
+                    'message' => 'Assinatura não encontrada no Stripe. Status local marcado como cancelado.',
+                    'hint'    => 'Verifique se a SECRET do backend e a conta (ou `stripe_account`) são as mesmas onde a assinatura foi criada.',
+                ], 200);
             }
 
-            // (Opcional) Atualização otimista local:
-            // - imediato: já volte pro plano gratuito
-            // - fim do período: salve a data para exibir no UI
-            if (!$atPeriodEnd && $subscription->status === 'canceled') {
-                $user->plan_id = 9;
-                $user->stripe_subscription_id = null;
-                $user->save();
-            } else if ($atPeriodEnd) {
-                $user->cancel_at_period_end = true;
-                $user->current_period_end = \Carbon\Carbon::createFromTimestamp($subscription->current_period_end);
-                $user->save();
+            // Caso 2: já cancelada e tentou atualizar campos não permitidos
+            if (stripos($msg, 'canceled subscription can only update its cancellation_details') !== false) {
+                $markLocalAsCanceled();
+                return response()->json([
+                    'message' => 'Assinatura já estava cancelada no Stripe. Status local sincronizado.',
+                ], 200);
             }
 
-            return response()->json([
-                'message' => $atPeriodEnd
-                    ? 'Cancelamento agendado para o fim do período.'
-                    : 'Assinatura cancelada imediatamente.',
-                'status' => $subscription->status,
-                'cancel_at_period_end' => (bool) $subscription->cancel_at_period_end,
-                'current_period_end' => $subscription->current_period_end,
-            ], 200);
+            report($e);
+            return response()->json(['message' => 'Erro ao cancelar no Stripe: ' . $msg], 422);
         } catch (\Stripe\Exception\ApiErrorException $e) {
             report($e);
-            return response()->json([
-                'message' => 'Erro ao cancelar no Stripe: ' . $e->getMessage()
-            ], 422);
+            return response()->json(['message' => 'Erro ao cancelar no Stripe: ' . $e->getMessage()], 422);
         } catch (\Throwable $e) {
             report($e);
             return response()->json(['message' => 'Erro interno ao cancelar.'], 500);
