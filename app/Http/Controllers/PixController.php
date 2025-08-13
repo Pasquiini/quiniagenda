@@ -47,19 +47,18 @@ class PixController extends Controller
     {
         $user = Auth::user();
 
+        // Busca a configuração Pix do utilizador
         $pixConfig = UserPixConfig::where('user_id', $user->id)->first();
 
         if ($pixConfig) {
-            return response()->json([
-                'has_pix_key' => true,
-                'accepts_only_pix' => $pixConfig->accepts_only_pix,
-            ], 200);
+            // Se a configuração for encontrada, retorne o objeto completo
+            return response()->json($pixConfig, 200);
         }
 
+        // Se nenhuma configuração for encontrada, retorne a mensagem de erro
         return response()->json([
             'message' => 'Nenhuma configuração Pix encontrada.',
-            'has_pix_key' => false,
-            'accepts_only_pix' => false,
+            'data' => null,
         ], 404);
     }
 
