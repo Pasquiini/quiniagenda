@@ -33,7 +33,7 @@ class CancelUnpaidAppointments extends Command
         $limiteTempo = Carbon::now()->subMinutes(30);
 
         // Busca agendamentos com status 'pendente' e criados há mais de 30 minutos
-        $agendamentosParaCancelar = Agendamento::where('payment_status', 'pendente')
+        $agendamentosParaCancelar = Agendamento::where('payment_status', 'Aguardando Pagamento')
             ->where('created_at', '<', $limiteTempo)
             ->get();
 
@@ -41,6 +41,7 @@ class CancelUnpaidAppointments extends Command
 
         foreach ($agendamentosParaCancelar as $agendamento) {
             $agendamento->status = 'cancelado';
+             $agendamento->payment_status = 'Cancelado';
             $agendamento->save();
             $count++;
         }
