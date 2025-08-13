@@ -281,11 +281,11 @@ class AgendamentoController extends Controller
         ]);
 
         $profissional = User::findOrFail($userId);
-        $date = new \DateTime($request->date);
-        $dayOfWeek = strtolower($date->format('l'));
+        $requestedDate = new \DateTime($request->date);
+        $dayOfWeek = strtolower($requestedDate->format('l'));
 
         $servico = Servico::findOrFail($request->servico_id);
-        $slotDuration = $servico->duration_minutes * 60;
+        $slotDurationMinutes = $servico->duration_minutes;
 
         // Obtém a regra semanal para o dia
         $horarioProfissional = $profissional->horariosDisponiveis()
@@ -296,65 +296,59 @@ class AgendamentoController extends Controller
             return response()->json(['message' => 'Profissional não trabalha neste dia.'], 404);
         }
 
-        $startTime = strtotime($horarioProfissional->hora_inicio);
-        $endTime = strtotime($horarioProfissional->hora_fim);
+        $startTime = new \DateTime($horarioProfissional->hora_inicio);
+        $endTime = new \DateTime($horarioProfissional->hora_fim);
 
-        // Obtém os agendamentos existentes APENAS com status 'confirmado'
+        // Obtém os agendamentos existentes com status 'confirmado' para a data solicitada
         $existingAppointments = $profissional->agendamentos()
-            ->whereDate('data_hora', $date)
+            ->whereDate('data_hora', $requestedDate->format('Y-m-d'))
             ->where('status', 'confirmado')
             ->get();
 
-        // Obtém os horários de exceção
         $horarioExcecoes = $profissional->horarioExcecoes()
-            ->where('date', $date->format('Y-m-d'))
+            ->where('date', $requestedDate->format('Y-m-d'))
             ->get();
 
-        // Obtém a data e hora atual para não mostrar horários passados
-        $now = new \DateTime();
+        // Lista de horários ocupados
+        $occupiedSlots = collect();
+
+        // Adiciona horários de exceção aos horários ocupados
+        foreach ($horarioExcecoes as $excecao) {
+            $excecaoStart = new \DateTime($excecao->start_time);
+            $excecaoEnd = new \DateTime($excecao->end_time);
+            $occupiedSlots->push(['start' => $excecaoStart, 'end' => $excecaoEnd]);
+        }
+
+        // Adiciona agendamentos confirmados aos horários ocupados
+        foreach ($existingAppointments as $appointment) {
+            $appointmentStart = new \DateTime($appointment->data_hora);
+            $appointmentEnd = (clone $appointmentStart)->modify('+ ' . $appointment->servico->duration_minutes . ' minutes');
+            $occupiedSlots->push(['start' => $appointmentStart, 'end' => $appointmentEnd]);
+        }
 
         $availableSlots = [];
-        $currentSlot = $startTime;
+        $currentSlotStart = (clone $requestedDate)->setTime($startTime->format('H'), $startTime->format('i'));
+        $currentSlotEnd = (clone $currentSlotStart)->modify('+ ' . $slotDurationMinutes . ' minutes');
 
-        while ($currentSlot + $slotDuration <= $endTime) {
-            $slotStartDateTime = new \DateTime($date->format('Y-m-d') . ' ' . date('H:i:s', $currentSlot));
-
-            // Pula horários que já passaram
-            if ($slotStartDateTime < $now) {
-                $currentSlot += $slotDuration;
-                continue;
-            }
+        while ($currentSlotEnd <= $requestedDate->setTime($endTime->format('H'), $endTime->format('i'))) {
 
             $slotIsAvailable = true;
 
-            // Verifica se o slot se sobrepõe a um horário de exceção ou agendamento confirmado
-            foreach ($horarioExcecoes as $excecao) {
-                $excecaoStart = strtotime($excecao->start_time);
-                $excecaoEnd = strtotime($excecao->end_time);
-
-                if (($currentSlot < $excecaoEnd && ($currentSlot + $slotDuration) > $excecaoStart)) {
+            // Verifica se o slot atual se sobrepõe a algum horário ocupado
+            foreach ($occupiedSlots as $occupiedSlot) {
+                if ($currentSlotStart < $occupiedSlot['end'] && $currentSlotEnd > $occupiedSlot['start']) {
                     $slotIsAvailable = false;
                     break;
                 }
             }
 
             if ($slotIsAvailable) {
-                foreach ($existingAppointments as $appointment) {
-                    $appointmentStart = strtotime($appointment->data_hora);
-                    $appointmentEnd = $appointmentStart + ($appointment->servico->duration_minutes * 60);
-
-                    if (($currentSlot < $appointmentEnd && ($currentSlot + $slotDuration) > $appointmentStart)) {
-                        $slotIsAvailable = false;
-                        break;
-                    }
-                }
+                $availableSlots[] = $currentSlotStart->format('H:i');
             }
 
-            if ($slotIsAvailable) {
-                $availableSlots[] = date('H:i', $currentSlot);
-            }
-
-            $currentSlot += $slotDuration;
+            // Avança para o próximo slot
+            $currentSlotStart->modify('+ ' . $slotDurationMinutes . ' minutes');
+            $currentSlotEnd->modify('+ ' . $slotDurationMinutes . ' minutes');
         }
 
         return response()->json([
