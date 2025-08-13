@@ -22,6 +22,8 @@ class PixController extends Controller
         $validated = $request->validate([
             'pix_key' => 'required|string|max:255',
             'pix_key_type' => 'nullable|string|max:255',
+            'accepts_only_pix' => 'nullable|boolean',
+
         ]);
 
         // Salva ou atualiza a configuração
@@ -48,12 +50,16 @@ class PixController extends Controller
         $pixConfig = UserPixConfig::where('user_id', $user->id)->first();
 
         if ($pixConfig) {
-            return response()->json($pixConfig, 200);
+            return response()->json([
+                'has_pix_key' => true,
+                'accepts_only_pix' => $pixConfig->accepts_only_pix,
+            ], 200);
         }
 
         return response()->json([
             'message' => 'Nenhuma configuração Pix encontrada.',
-            'data' => null,
+            'has_pix_key' => false,
+            'accepts_only_pix' => false,
         ], 404);
     }
 

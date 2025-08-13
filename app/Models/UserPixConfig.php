@@ -18,6 +18,8 @@ class UserPixConfig extends Model
         'user_id',
         'pix_key',
         'pix_key_type',
+        'accepts_only_pix',
+
     ];
 
     /**
