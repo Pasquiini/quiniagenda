@@ -284,7 +284,7 @@ class AgendamentoController extends Controller
         $dayOfWeek = strtolower($date->format('l'));
 
         $servico = Servico::findOrFail($request->servico_id);
-        $slotDuration = $servico->duration_minutes * 60;
+        $slotDuration = $servico->duration_minutes * 60; // Duração em segundos
 
         // Obtém a regra semanal para o dia
         $horarioProfissional = $profissional->horariosDisponiveis()
@@ -298,9 +298,10 @@ class AgendamentoController extends Controller
         $startTime = strtotime($horarioProfissional->hora_inicio);
         $endTime = strtotime($horarioProfissional->hora_fim);
 
-        // Obtém os agendamentos existentes
+        // Obtém os agendamentos existentes com status 'confirmado'
         $existingAppointments = $profissional->agendamentos()
             ->whereDate('data_hora', $date)
+            ->where('status', 'confirmado')
             ->get();
 
         // Obtém os horários de exceção
@@ -310,8 +311,8 @@ class AgendamentoController extends Controller
 
         $availableSlots = [];
         $currentSlot = $startTime;
+
         while ($currentSlot + $slotDuration <= $endTime) {
-            $slotEnd = $currentSlot + $slotDuration;
             $slotIsAvailable = true;
 
             // Verifica se o slot se sobrepõe a um horário de exceção
@@ -319,10 +320,7 @@ class AgendamentoController extends Controller
                 $excecaoStart = strtotime($excecao->start_time);
                 $excecaoEnd = strtotime($excecao->end_time);
 
-                if (($currentSlot >= $excecaoStart && $currentSlot < $excecaoEnd) ||
-                    ($slotEnd > $excecaoStart && $slotEnd <= $excecaoEnd) ||
-                    ($excecaoStart >= $currentSlot && $excecaoStart < $slotEnd)
-                ) {
+                if (($currentSlot < $excecaoEnd && ($currentSlot + $slotDuration) > $excecaoStart)) {
                     $slotIsAvailable = false;
                     break;
                 }
@@ -334,10 +332,7 @@ class AgendamentoController extends Controller
                     $appointmentStart = strtotime($appointment->data_hora);
                     $appointmentEnd = $appointmentStart + ($appointment->servico->duration_minutes * 60);
 
-                    if (($currentSlot >= $appointmentStart && $currentSlot < $appointmentEnd) ||
-                        ($slotEnd > $appointmentStart && $slotEnd <= $appointmentEnd) ||
-                        ($appointmentStart >= $currentSlot && $appointmentStart < $slotEnd)
-                    ) {
+                    if (($currentSlot < $appointmentEnd && ($currentSlot + $slotDuration) > $appointmentStart)) {
                         $slotIsAvailable = false;
                         break;
                     }
