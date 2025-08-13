@@ -12,21 +12,23 @@ return Application::configure(basePath: dirname(__DIR__))
         commands: __DIR__ . '/../routes/console.php',
         health: '/up',
     )
-->withMiddleware(function (Middleware $middleware) {
-    $middleware->web(append: [
-        \App\Http\Middleware\EncryptCookies::class,
-        \Illuminate\Cookie\Middleware\AddQueuedCookiesToResponse::class,
-        \Illuminate\Session\Middleware\StartSession::class,
-        \Illuminate\View\Middleware\ShareErrorsFromSession::class,
-        \App\Http\Middleware\VerifyCsrfToken::class,
-        \Illuminate\Routing\Middleware\SubstituteBindings::class,
-    ]);
-    $middleware->append(\Illuminate\Http\Middleware\HandleCors::class);
-})
+    ->withMiddleware(function (Middleware $middleware) {
+        $middleware->web(append: [
+            \App\Http\Middleware\EncryptCookies::class,
+            \Illuminate\Cookie\Middleware\AddQueuedCookiesToResponse::class,
+            \Illuminate\Session\Middleware\StartSession::class,
+            \Illuminate\View\Middleware\ShareErrorsFromSession::class,
+            \App\Http\Middleware\VerifyCsrfToken::class,
+            \Illuminate\Routing\Middleware\SubstituteBindings::class,
+        ]);
+        $middleware->append(\Illuminate\Http\Middleware\HandleCors::class);
+    })
     ->withExceptions(function (Exceptions $exceptions) {
         //
     })
-     ->withSchedule(function (Schedule $schedule) {
-        $schedule->command('appointments:cancel-unpaid')->everyTenMinutes();
+    ->withSchedule(function (Schedule $schedule) {
+        $schedule->command('appointments:cancel-unpaid')
+            ->everyTenMinutes()
+            ->appendOutputTo(storage_path('logs/schedule.log')); // Adicione esta linha
     })
     ->create();
