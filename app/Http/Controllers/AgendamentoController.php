@@ -272,6 +272,7 @@ class AgendamentoController extends Controller
         return $cleaned; // Retorna o número limpo caso não se encaixe nos padrões
     }
 
+
     public function getAvailability(int $userId, Request $request)
     {
         $request->validate([
@@ -284,7 +285,7 @@ class AgendamentoController extends Controller
         $dayOfWeek = strtolower($date->format('l'));
 
         $servico = Servico::findOrFail($request->servico_id);
-        $slotDuration = $servico->duration_minutes * 60; // Duração em segundos
+        $slotDuration = $servico->duration_minutes * 60;
 
         // Obtém a regra semanal para o dia
         $horarioProfissional = $profissional->horariosDisponiveis()
@@ -298,7 +299,7 @@ class AgendamentoController extends Controller
         $startTime = strtotime($horarioProfissional->hora_inicio);
         $endTime = strtotime($horarioProfissional->hora_fim);
 
-        // Obtém os agendamentos existentes com status 'confirmado'
+        // Obtém os agendamentos existentes APENAS com status 'confirmado'
         $existingAppointments = $profissional->agendamentos()
             ->whereDate('data_hora', $date)
             ->where('status', 'confirmado')
@@ -309,13 +310,24 @@ class AgendamentoController extends Controller
             ->where('date', $date->format('Y-m-d'))
             ->get();
 
+        // Obtém a data e hora atual para não mostrar horários passados
+        $now = new \DateTime();
+
         $availableSlots = [];
         $currentSlot = $startTime;
 
         while ($currentSlot + $slotDuration <= $endTime) {
+            $slotStartDateTime = new \DateTime($date->format('Y-m-d') . ' ' . date('H:i:s', $currentSlot));
+
+            // Pula horários que já passaram
+            if ($slotStartDateTime < $now) {
+                $currentSlot += $slotDuration;
+                continue;
+            }
+
             $slotIsAvailable = true;
 
-            // Verifica se o slot se sobrepõe a um horário de exceção
+            // Verifica se o slot se sobrepõe a um horário de exceção ou agendamento confirmado
             foreach ($horarioExcecoes as $excecao) {
                 $excecaoStart = strtotime($excecao->start_time);
                 $excecaoEnd = strtotime($excecao->end_time);
@@ -326,7 +338,6 @@ class AgendamentoController extends Controller
                 }
             }
 
-            // Verifica se o slot se sobrepõe a um agendamento existente
             if ($slotIsAvailable) {
                 foreach ($existingAppointments as $appointment) {
                     $appointmentStart = strtotime($appointment->data_hora);
@@ -342,6 +353,7 @@ class AgendamentoController extends Controller
             if ($slotIsAvailable) {
                 $availableSlots[] = date('H:i', $currentSlot);
             }
+
             $currentSlot += $slotDuration;
         }
 
