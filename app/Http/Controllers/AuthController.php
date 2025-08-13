@@ -108,8 +108,22 @@ class AuthController extends Controller
             return response()->json(['message' => 'Profissional não encontrado.'], 404);
         }
 
-        $hasPixKey = (bool) $profissional->pixConfig;
+        // Pega a configuração Pix do profissional.
+        // Usamos o operador de coalescência nula (??) para evitar erros caso não exista a configuração.
+        $pixConfig = $profissional->pixConfig ?? null;
 
-        return response()->json(['hasPixKey' => $hasPixKey]);
+        // Define se o profissional tem uma chave Pix.
+        $hasPixKey = (bool) $pixConfig;
+
+        // Define se o profissional aceita apenas Pix.
+        // Se a configuração existir, usamos o valor de 'accepts_only_pix'.
+        // Caso contrário, o valor padrão é false.
+        $acceptsOnlyPix = $pixConfig ? $pixConfig->accepts_only_pix : false;
+
+        // Retorna um objeto com as duas propriedades
+        return response()->json([
+            'hasPixKey' => $hasPixKey,
+            'acceptsOnlyPix' => $acceptsOnlyPix,
+        ]);
     }
 }
