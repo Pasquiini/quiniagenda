@@ -170,6 +170,7 @@ class AgendamentoController extends Controller
 
         $existingAppointments = $profissional->agendamentos()
             ->whereDate('data_hora', $agendamentoStart->format('Y-m-d'))
+            ->where('status', 'confirmado')
             ->get();
 
         foreach ($existingAppointments as $appointment) {
