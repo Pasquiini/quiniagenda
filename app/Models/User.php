@@ -113,8 +113,13 @@ class User extends Authenticatable implements JWTSubject
         return $this->hasMany(HorarioExcecao::class);
     }
 
-     public function pixConfig(): HasOne
+    public function pixConfig(): HasOne
     {
         return $this->hasOne(UserPixConfig::class);
+    }
+
+    public function style(): HasOne
+    {
+        return $this->hasOne(Style::class);
     }
 }
