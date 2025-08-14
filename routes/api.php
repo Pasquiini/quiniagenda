@@ -13,6 +13,7 @@ use App\Http\Controllers\OrcamentoController;
 use App\Http\Controllers\PixController;
 use App\Http\Controllers\PublicOrcamentoController;
 use App\Http\Controllers\ServicoController;
+use App\Http\Controllers\StyleController;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Route;
 
@@ -29,6 +30,7 @@ Route::get('/booking/{userId}/availability/monthly/{year}/{month}/{servicoId}', 
 Route::post('/pix/webhook', [PixController::class, 'webhook']); // coloque um middleware para assinar/validar
 Route::get('/agendamentos/{agendamento}/payment-status', [PixController::class, 'paymentStatus']);
 Route::get('professional/{userId}/has-pix', [AuthController::class, 'hasPix']);
+Route::get('/style/{userId}', [StyleController::class, 'showPublic']);
 
 // Rotas protegidas (precisam de autenticação JWT)
 Route::middleware('auth:api')->get('/subscription-details', [PlanController::class, 'getSubscriptionDetails']);
@@ -85,4 +87,7 @@ Route::middleware('auth:api')->group(function () {
     Route::post('/pix-config', [PixController::class, 'store']);
     Route::delete('/pix-config', [PixController::class, 'destroy']);
     Route::post('/agendamentos/{agendamentoId}/mark-as-paid', [AgendamentoController::class, 'markAsPaid']);
+    Route::post('/style', [StyleController::class, 'store']);
+    // Rota para buscar a estilização
+    Route::get('/style', [StyleController::class, 'show']);
 });

@@ -21,8 +21,13 @@ class DashboardController extends Controller
 
         // Faturamento mensal
         $faturamentoMensal = $user->faturas()
-            ->select(DB::raw('MONTH(created_at) as mes'), DB::raw('SUM(valor_total) as total'))
-            ->groupBy('mes')
+            ->select(
+                DB::raw('YEAR(created_at) as ano'),
+                DB::raw('MONTH(created_at) as mes'),
+                DB::raw('SUM(valor_total) as total')
+            )
+            ->groupBy('ano', 'mes')
+            ->orderBy('ano')
             ->orderBy('mes')
             ->get();
 
