@@ -37,11 +37,24 @@ class PlanController extends Controller
         $plan = Plan::findOrFail($request->plan_id);
         $user = Auth::user();
 
+        // Verificação de segurança: O utilizador não pode assinar se já tiver uma subscrição ativa
+        if ($user->stripe_subscription_id) {
+            // Redireciona o utilizador para o portal de faturamento para gerir a sua subscrição
+            $stripe = new \Stripe\StripeClient(env('STRIPE_SECRET_KEY'));
+            $session = \Stripe\BillingPortal\Session::create([
+                'customer' => $user->stripe_customer_id,
+                'return_url' => config('app.url') . '/plans',
+            ]);
+            return response()->json(['url' => $session->url]);
+        }
+
+        // Agora, o seu código de criação de cliente e sessão de checkout continua,
+        // pois este bloco só é executado se o utilizador não tiver uma subscrição ativa.
+
         if ($plan->price > 0 && empty($plan->stripe_price_id)) {
             return response()->json(['error' => 'ID do preço do plano não encontrado.'], 400);
         }
 
-        // Adicionamos a lógica para criar o cliente do Stripe antes de qualquer outra coisa
         if (empty($user->stripe_customer_id)) {
             try {
                 $customer = Customer::create([
@@ -68,7 +81,7 @@ class PlanController extends Controller
             'success_url' => config('app.url') . '/dashboard?success=true',
             'cancel_url' => config('app.url') . '/plans?canceled=true',
             'locale' => 'pt-BR',
-            'customer' => $user->stripe_customer_id, // Usamos o ID que acabamos de criar ou que já existia
+            'customer' => $user->stripe_customer_id,
             'metadata' => [
                 'user_id' => $user->id,
                 'plan_id' => $plan->id,
