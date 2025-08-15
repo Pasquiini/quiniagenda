@@ -13,16 +13,13 @@ class CheckSubscription
     {
         $user = Auth::user();
 
-        // Se o utilizador não está autenticado, permite o acesso (rotas públicas)
         if (!$user) {
             return $next($request);
         }
 
-        // Se o utilizador não tiver uma subscrição do Stripe
-        // ou a subscrição tiver expirado
         if (empty($user->stripe_subscription_id) || ($user->current_period_end && $user->current_period_end->isPast())) {
-            // Redireciona o utilizador para a página de planos
-            return redirect('/plans')->with('error', 'O seu plano expirou. Por favor, escolha um plano para continuar.');
+            // AQUI: Retornamos um JSON com um status 403
+            return response()->json(['message' => 'O seu plano expirou. Por favor, escolha um plano para continuar.'], 403);
         }
 
         return $next($request);
