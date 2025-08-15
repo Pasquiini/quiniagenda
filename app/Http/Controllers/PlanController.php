@@ -382,14 +382,16 @@ class PlanController extends Controller
 
     public function redirectToBillingPortal(Request $request)
     {
+        // AQUI: Adiciona a linha de inicialização da API
+        Stripe::setApiKey(config('services.stripe.secret'));
+
         $user = Auth::user();
 
         if (empty($user->stripe_customer_id)) {
             return response()->json(['error' => 'Cliente Stripe não encontrado.'], 400);
         }
 
-        $stripe = new \Stripe\StripeClient(config('services.stripe.secret'));
-
+        // A chamada para a criação da sessão não precisa mais da variável $stripe
         try {
             $session = \Stripe\BillingPortal\Session::create([
                 'customer' => $user->stripe_customer_id,
