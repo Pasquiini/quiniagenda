@@ -90,7 +90,7 @@ class PlanController extends Controller
     {
         Log::info('Webhook do Stripe recebido.');
 
-        $endpointSecret = config('services.stripe.webhook_secret');
+        $endpointSecret = env('STRIPE_WEBHOOK_SECRET');
         $sigHeader = $request->header('Stripe-Signature');
         $payload = $request->getContent();
 
@@ -237,7 +237,6 @@ class PlanController extends Controller
             $requestOptions['stripe_account'] = $user->stripe_account_id;
         }
 
-        // O helper foi atualizado para remover o plan_id em vez de definir para 9
         $markLocalAsCanceled = function () use ($user) {
             $user->plan_id = null;
             $user->stripe_subscription_id = null;
@@ -261,6 +260,14 @@ class PlanController extends Controller
                 return response()->json(['message' => 'Assinatura já estava cancelada.'], 200);
             }
 
+            if (($subscription->status ?? null) === 'paused') {
+                $subscription = $stripe->subscriptions->resume(
+                    $user->stripe_subscription_id,
+                    ['billing_cycle_anchor' => 'now'],
+                    $requestOptions
+                );
+            }
+
             if ($atPeriodEnd) {
                 $subscription = $stripe->subscriptions->update(
                     $user->stripe_subscription_id,
@@ -273,6 +280,11 @@ class PlanController extends Controller
                     'status' => $subscription->status,
                     'cancel_at_period_end' => (bool)$subscription->cancel_at_period_end,
                     'current_period_end' => $subscription->current_period_end,
+                    'subscription_details' => [ // Retorne os detalhes da subscrição
+                        'status' => $subscription->status,
+                        'renewalDate' => $subscription->current_period_end,
+                        'subscriptionId' => $subscription->id
+                    ]
                 ], 200);
             } else {
                 $subscription = $stripe->subscriptions->cancel($user->stripe_subscription_id, [], $requestOptions);
