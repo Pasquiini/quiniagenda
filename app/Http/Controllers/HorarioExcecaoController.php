@@ -22,7 +22,7 @@ class HorarioExcecaoController extends Controller
     public function store(Request $request)
     {
         $validated = $request->validate([
-            'date' => 'required|date_format:Y-m-d|unique:horario_excecoes,date,NULL,id,user_id,' . Auth::id(),
+            'date' => 'required|date_format:Y-m-d',
             'start_time' => 'nullable|date_format:H:i',
             'end_time' => 'nullable|date_format:H:i|after:start_time',
         ]);
