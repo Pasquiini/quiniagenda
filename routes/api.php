@@ -13,6 +13,7 @@ use App\Http\Controllers\OrcamentoController;
 use App\Http\Controllers\PixController;
 use App\Http\Controllers\PublicOrcamentoController;
 use App\Http\Controllers\ServicoController;
+use App\Http\Controllers\StripeController;
 use App\Http\Controllers\StyleController;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Route;
@@ -32,6 +33,7 @@ Route::get('/agendamentos/{agendamento}/payment-status', [PixController::class, 
 Route::get('professional/{userId}/has-pix', [AuthController::class, 'hasPix']);
 Route::get('/style/{userId}', [StyleController::class, 'showPublic']);
 Route::post('/billing-portal', [PlanController::class, 'redirectToBillingPortal'])->middleware('auth:api');
+Route::get('/stripe-config', [StripeController::class, 'config']);
 
 // Rotas protegidas (precisam de autenticação JWT)
 Route::middleware('auth:api')->get('/subscription-details', [PlanController::class, 'getSubscriptionDetails']);
