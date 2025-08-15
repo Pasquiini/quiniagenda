@@ -379,4 +379,27 @@ class PlanController extends Controller
             ], 500);
         }
     }
+
+    public function redirectToBillingPortal(Request $request)
+    {
+        $user = Auth::user();
+
+        if (empty($user->stripe_customer_id)) {
+            return response()->json(['error' => 'Cliente Stripe não encontrado.'], 400);
+        }
+
+        $stripe = new \Stripe\StripeClient(config('services.stripe.secret'));
+
+        try {
+            $session = \Stripe\BillingPortal\Session::create([
+                'customer' => $user->stripe_customer_id,
+                'return_url' => config('app.url') . '/plans',
+            ]);
+
+            return response()->json(['url' => $session->url]);
+        } catch (\Stripe\Exception\ApiErrorException $e) {
+            Log::error('Erro ao criar sessão do portal de faturação: ' . $e->getMessage());
+            return response()->json(['error' => 'Erro ao criar sessão do portal de faturação.'], 500);
+        }
+    }
 }

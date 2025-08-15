@@ -31,6 +31,7 @@ Route::post('/pix/webhook', [PixController::class, 'webhook']); // coloque um mi
 Route::get('/agendamentos/{agendamento}/payment-status', [PixController::class, 'paymentStatus']);
 Route::get('professional/{userId}/has-pix', [AuthController::class, 'hasPix']);
 Route::get('/style/{userId}', [StyleController::class, 'showPublic']);
+Route::post('/billing-portal', [PlanController::class, 'redirectToBillingPortal'])->middleware('auth:api');
 
 // Rotas protegidas (precisam de autenticação JWT)
 Route::middleware('auth:api')->get('/subscription-details', [PlanController::class, 'getSubscriptionDetails']);
