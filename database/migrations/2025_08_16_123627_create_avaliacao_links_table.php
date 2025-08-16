@@ -18,6 +18,7 @@ return new class extends Migration
             $table->string('url');
             $table->string('tipo')->default('outro'); // 'google' ou 'outro'
             $table->timestamps();
+            $table->softDeletes();
         });
     }
 
