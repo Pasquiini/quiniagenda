@@ -51,10 +51,6 @@ class AvaliacaoLinkController extends Controller
      */
     public function update(Request $request, AvaliacaoLink $avaliacaoLink)
     {
-        // Garante que o usuário só possa atualizar seus próprios links
-        if ($avaliacaoLink->user_id !== auth()->id()) {
-            return response()->json(['message' => 'Unauthorized'], 403);
-        }
 
         $request->validate([
             'plataforma' => 'required|string|max:255',
@@ -75,10 +71,6 @@ class AvaliacaoLinkController extends Controller
      */
     public function destroy(AvaliacaoLink $avaliacaoLink)
     {
-        // Garante que o usuário só possa deletar seus próprios links
-        if ($avaliacaoLink->user_id !== auth()->id()) {
-            return response()->json(['message' => 'Unauthorized'], 403);
-        }
 
         $avaliacaoLink->delete();
 
