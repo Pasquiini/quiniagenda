@@ -4,6 +4,7 @@ use App\Http\Controllers\AuthController;
 use App\Http\Controllers\PlanController;
 use App\Http\Controllers\AgendamentoController;
 use App\Http\Controllers\AsaasWebhookController;
+use App\Http\Controllers\AvaliacaoLinkController;
 use App\Http\Controllers\ClienteController;
 use App\Http\Controllers\DashboardController;
 use App\Http\Controllers\FinanceiroController;
@@ -93,4 +94,5 @@ Route::middleware('auth:api')->group(function () {
     Route::post('/style', [StyleController::class, 'store']);
     // Rota para buscar a estilização
     Route::get('/style', [StyleController::class, 'show']);
+    Route::apiResource('avaliacoes', AvaliacaoLinkController::class);
 });
