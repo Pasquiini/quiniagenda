@@ -28,4 +28,9 @@ class Cliente extends Model
     {
         return $this->hasMany(HistoricoCliente::class)->latest();
     }
+
+    public function agendamentos()
+    {
+        return $this->hasMany(Agendamento::class);
+    }
 }

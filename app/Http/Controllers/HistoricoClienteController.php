@@ -5,7 +5,7 @@ namespace App\Http\Controllers;
 use App\Http\Controllers\Controller;
 use App\Models\Cliente;
 use Illuminate\Http\Request;
-use Tymon\JWTAuth\Contracts\Providers\Auth;
+use Illuminate\Support\Facades\Auth;
 
 class HistoricoClienteController extends Controller
 {
@@ -31,7 +31,7 @@ class HistoricoClienteController extends Controller
         $historico = $cliente->historico()->create([
             'titulo' => $request->titulo,
             'conteudo' => $request->conteudo,
-            'usuario_id' => Auth::id(), // Vincula o registro ao usuário logado
+            'usuario_id' => Auth::user()->id,
         ]);
 
         return response()->json($historico, 201);
