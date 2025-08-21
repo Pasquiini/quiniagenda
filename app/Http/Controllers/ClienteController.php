@@ -60,6 +60,7 @@ class ClienteController extends Controller
 
     public function show(Cliente $cliente)
     {
+        $cliente->load('historico', 'agendamentos.servico');
         return response()->json($cliente);
     }
 }
