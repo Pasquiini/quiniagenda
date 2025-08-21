@@ -14,7 +14,8 @@ class HistoricoClienteController extends Controller
      */
     public function index(Cliente $cliente)
     {
-        $historico = $cliente->historico()->with('user', 'agendamentos')->get();
+        $historico = $cliente->historico()->with('usuario')->get();
+
         return response()->json($historico);
     }
 
