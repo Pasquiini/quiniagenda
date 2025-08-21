@@ -8,6 +8,7 @@ use App\Http\Controllers\AvaliacaoLinkController;
 use App\Http\Controllers\ClienteController;
 use App\Http\Controllers\DashboardController;
 use App\Http\Controllers\FinanceiroController;
+use App\Http\Controllers\HistoricoClienteController;
 use App\Http\Controllers\HorarioDisponivelController;
 use App\Http\Controllers\HorarioExcecaoController;
 use App\Http\Controllers\OrcamentoController;
@@ -95,4 +96,6 @@ Route::middleware('auth:api')->group(function () {
     // Rota para buscar a estilização
     Route::get('/style', [StyleController::class, 'show']);
     Route::apiResource('avaliacoes', AvaliacaoLinkController::class);
+    Route::get('/{cliente}/historico', [HistoricoClienteController::class, 'index']);
+    Route::post('/{cliente}/historico', [HistoricoClienteController::class, 'store']);
 });

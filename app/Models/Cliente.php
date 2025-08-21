@@ -23,4 +23,9 @@ class Cliente extends Model
     {
         return $this->belongsTo(User::class);
     }
+
+     public function historico()
+    {
+        return $this->hasMany(HistoricoCliente::class)->latest();
+    }
 }
