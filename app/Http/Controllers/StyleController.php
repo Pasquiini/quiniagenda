@@ -87,6 +87,13 @@ class StyleController extends Controller
             ]);
         }
 
+        if ($style->logo_url) {
+            $style->logo_url = asset(str_replace('storage/', 'public/', $style->logo_url));
+        }
+        if ($style->profile_photo_url) {
+            $style->profile_photo_url = asset(str_replace('storage/', 'public/', $style->profile_photo_url));
+        }
+
         return response()->json(['style' => $style]);
     }
 }
