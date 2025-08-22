@@ -98,4 +98,6 @@ Route::middleware('auth:api')->group(function () {
     Route::apiResource('avaliacoes', AvaliacaoLinkController::class);
     Route::get('/{cliente}/historico', [HistoricoClienteController::class, 'index']);
     Route::post('/{cliente}/historico', [HistoricoClienteController::class, 'store']);
+    Route::get('/profissional/regras-agendamento', [AuthController::class, 'getRegrasAgendamento']);
+    Route::put('/profissional/regras-agendamento', [AuthController::class, 'updateRegrasAgendamento']);
 });

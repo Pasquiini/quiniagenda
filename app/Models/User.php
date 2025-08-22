@@ -32,7 +32,8 @@ class User extends Authenticatable implements JWTSubject
         'stripe_customer_id',
         'phone',
         'cancel_at_period_end',
-        'current_period_end'
+        'current_period_end',
+        'regras_agendamento',
     ];
 
     /**

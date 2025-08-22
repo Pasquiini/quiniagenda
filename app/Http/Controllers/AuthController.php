@@ -187,4 +187,28 @@ class AuthController extends Controller
             'acceptsOnlyPix' => $acceptsOnlyPix,
         ]);
     }
+
+    public function getRegrasAgendamento(Request $request)
+    {
+        $user = $request->user();
+        return response()->json([
+            'regras' => $user->regras_agendamento ?? ''
+        ]);
+    }
+
+    /**
+     * Atualiza a regra de agendamento para o usuário autenticado.
+     */
+    public function updateRegrasAgendamento(Request $request)
+    {
+        $request->validate([
+            'regras' => 'nullable|string',
+        ]);
+
+        $user = $request->user();
+        $user->regras_agendamento = $request->input('regras');
+        $user->save();
+
+        return response()->json(['message' => 'Regra de agendamento atualizada com sucesso.']);
+    }
 }
