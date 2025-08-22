@@ -18,6 +18,13 @@ class Style extends Model
         'card_background_color',
         'button_color',
         'text_color',
+        'profile_photo_url', // Novo campo para a foto de perfil
+        'professional_name', // Novo campo para o nome
+        'professional_specialty', // Novo campo para a especialidade
+        'professional_description',
+        'whatsapp_number',
+        'instagram_handle',
+        'facebook_handle',
     ];
 
     /**
