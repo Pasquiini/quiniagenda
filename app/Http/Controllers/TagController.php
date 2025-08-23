@@ -12,7 +12,7 @@ class TagController extends Controller
 {
     public function index()
     {
-        $userId = Auth::id();
+        $userId = Auth::user()->id;
         $tags = Tag::where('user_id', $userId)->get();
 
         return response()->json($tags);
@@ -23,7 +23,7 @@ class TagController extends Controller
      */
     public function store(Request $request)
     {
-        $userId = Auth::id();
+        $userId = Auth::user()->id;
         $request->validate([
             'nome' => [
                 'required',
@@ -49,7 +49,7 @@ class TagController extends Controller
     public function show(Tag $tag)
     {
         // Verifica se a tag pertence ao usuário autenticado
-        if (Auth::id() !== $tag->user_id) {
+        if (Auth::user()->id !== $tag->user_id) {
             return response()->json(['message' => 'Não autorizado'], 403);
         }
 
@@ -59,11 +59,11 @@ class TagController extends Controller
     public function update(Request $request, Tag $tag)
     {
         // Verifica se a tag pertence ao usuário autenticado
-        if (Auth::id() !== $tag->user_id) {
+        if (Auth::user()->id !== $tag->user_id) {
             return response()->json(['message' => 'Não autorizado'], 403);
         }
 
-        $userId = Auth::id();
+        $userId = Auth::user()->id;
         $request->validate([
             'nome' => [
                 'required',
@@ -85,7 +85,7 @@ class TagController extends Controller
     public function destroy(Tag $tag)
     {
         // Verifica se a tag pertence ao usuário autenticado
-        if (Auth::id() !== $tag->user_id) {
+        if (Auth::user()->id !== $tag->user_id) {
             return response()->json(['message' => 'Não autorizado'], 403);
         }
 
