@@ -23,24 +23,26 @@ class TagController extends Controller
      */
     public function store(Request $request)
     {
-        $userId = Auth::user()->id;
+        // A validação permanece a mesma, pois o `user_id` é capturado
+        // e usado na regra de unicidade.
         $request->validate([
             'nome' => [
                 'required',
                 'string',
                 'max:50',
-                // 💡 Garante que o nome da tag seja único para o usuário logado
-                Rule::unique('tags')->where(function ($query) use ($userId) {
-                    return $query->where('user_id', $userId);
+                // A regra de unicidade usa o ID do usuário para garantir tags únicas por usuário.
+                Rule::unique('tags')->where(function ($query) {
+                    return $query->where('user_id', Auth::user()->id);
                 })
             ],
             'cor' => 'required|string|regex:/^#[0-9a-fA-F]{6}$/'
         ]);
 
-        $tag = Tag::create([
+        // 💡 Correção: Crie a tag usando a relação `tags()` do usuário autenticado.
+        // Isso atribui o 'user_id' automaticamente.
+        $tag = Auth::user()->tags()->create([
             'nome' => $request->nome,
             'cor' => $request->cor,
-            'user_id' => $userId
         ]);
 
         return response()->json($tag, 201);
