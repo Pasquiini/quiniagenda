@@ -4,6 +4,7 @@ namespace App\Models;
 
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
+use Illuminate\Database\Eloquent\Relations\BelongsToMany;
 
 class Cliente extends Model
 {
@@ -24,7 +25,7 @@ class Cliente extends Model
         return $this->belongsTo(User::class);
     }
 
-     public function historico()
+    public function historico()
     {
         return $this->hasMany(HistoricoCliente::class)->latest();
     }
@@ -32,5 +33,10 @@ class Cliente extends Model
     public function agendamentos()
     {
         return $this->hasMany(Agendamento::class);
+    }
+
+    public function tags(): BelongsToMany
+    {
+        return $this->belongsToMany(Tag::class);
     }
 }

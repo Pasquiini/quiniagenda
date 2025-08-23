@@ -17,6 +17,7 @@ use App\Http\Controllers\PublicOrcamentoController;
 use App\Http\Controllers\ServicoController;
 use App\Http\Controllers\StripeController;
 use App\Http\Controllers\StyleController;
+use App\Http\Controllers\TagController;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Route;
 
@@ -100,4 +101,5 @@ Route::middleware('auth:api')->group(function () {
     Route::post('/{cliente}/historico', [HistoricoClienteController::class, 'store']);
     Route::get('/profissional/regras-agendamento', [AuthController::class, 'getRegrasAgendamento']);
     Route::put('/profissional/regras-agendamento', [AuthController::class, 'updateRegrasAgendamento']);
+    Route::apiResource('tags', TagController::class)->only(['index', 'store', 'update', 'destroy']);
 });
